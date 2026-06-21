@@ -810,4 +810,134 @@
         MinPriv        = 'AnyAuthUser'
     }
 
+    # ── CA-Config / AD CS findings ────────────────────────────────────────────
+
+    'ADCS-001' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm HTTP enrollment URL responds — curl/Invoke-WebRequest HEAD (no auth, no certificate requested)'
+                Destructive = $false
+                Rollback    = 'HTTP HEAD request only — no certificate issued, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Single HTTP HEAD request — no relay, no exploitation'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-002' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'certipy find -vulnerable — enumerate ESC1 templates (read-only LDAP and CA enumeration)'
+                Destructive = $false
+                Rollback    = 'Enumeration only — no certificate requested, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4886,4887)
+        BlastRadius    = 'LDAP read + CA connection — no certificate issued'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-003' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'certipy find — enumerate templates with broad enrollment rights (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4886)
+        BlastRadius    = 'LDAP enumeration — no certificate issued'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-004' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'certipy find — identify Enrollment Agent templates (ESC3) — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP/CA enumeration — no certificate issued, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4886,4887)
+        BlastRadius    = 'Read-only enumeration'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-005' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'certipy find — enumerate Any Purpose / no-EKU templates (ESC2) — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP enumeration — no certificate issued, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Read-only LDAP enumeration'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-006' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm CRL Distribution Point URLs reachable — curl/Invoke-WebRequest (passive probe)'
+                Destructive = $false
+                Rollback    = 'HTTP GET to CRL endpoint — read-only, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'HTTP request to CRL endpoint only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-007' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm CT_FLAG_PEND_ALL_REQUESTS not set via LDAP msPKI-Enrollment-Flag read (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4886)
+        BlastRadius    = 'LDAP read — no certificate requested'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-008' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Invoke-Locksmith -Mode 1 — read-only AD CS vulnerability enumeration (no changes made)'
+                Destructive = $false
+                Rollback    = 'Read-only LDAP + CA enumeration — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4886,4887)
+        BlastRadius    = 'Locksmith Mode 1 — enumerate only, no fixes applied'
+        MinPriv        = 'AnyAuthUser'
+    }
+
 }
