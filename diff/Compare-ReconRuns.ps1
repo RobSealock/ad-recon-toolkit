@@ -28,17 +28,44 @@
 .PARAMETER OutputPath
     Write the diff report to this file (Markdown). Defaults to
     output\diffs\diff-<RunA>-vs-<RunB>.md.
+
+.PARAMETER AutoSelectPrevious
+    When supplied (pipeline mode), RunAPath is not required. The script
+    automatically selects the most recent previous run from run-index.json
+    as the baseline, and uses NewRunId as the comparison run.
+
+.PARAMETER NewRunId
+    Used with -AutoSelectPrevious. The run ID to use as the comparison (RunB).
 #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName='Explicit')]
 param(
-    [Parameter(Mandatory)][string]$RunAPath,
-    [Parameter(Mandatory)][string]$RunBPath,
+    [Parameter(Mandatory, ParameterSetName='Explicit')][string]$RunAPath,
+    [Parameter(Mandatory, ParameterSetName='Explicit')][string]$RunBPath,
+    [Parameter(Mandatory, ParameterSetName='Auto')][switch]$AutoSelectPrevious,
+    [Parameter(Mandatory, ParameterSetName='Auto')][string]$NewRunId,
     [string]$RepoRoot    = (Split-Path $PSScriptRoot -Parent),
     [switch]$IncludeState,
     [string]$OutputPath  = $null
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Auto-select previous run from index (pipeline mode)
+if ($AutoSelectPrevious) {
+    $indexPath = Join-Path $RepoRoot 'output\run-index.json'
+    if (-not (Test-Path $indexPath)) {
+        Write-Host "[Diff] No run index found — skipping drift comparison."
+        return $null
+    }
+    $index = @(Get-Content $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+    $prior = @($index | Where-Object { $_.runId -ne $NewRunId } | Sort-Object runId -Descending | Select-Object -First 1)
+    if (-not $prior) {
+        Write-Host "[Diff] Only one run in index — no baseline for comparison. Skipping."
+        return $null
+    }
+    $RunAPath = $prior[0].runRoot
+    $RunBPath = Join-Path $RepoRoot "output\runs\$NewRunId"
+}
 
 function Resolve-RunPath {
     param([string]$PathOrId, [string]$RepoRoot)

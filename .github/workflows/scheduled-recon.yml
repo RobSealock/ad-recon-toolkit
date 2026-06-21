@@ -1,0 +1,203 @@
+# ad-recon-toolkit scheduled pipeline mode (Milestone 9)
+#
+# PURPOSE:
+#   Runs the AD assessment on a self-hosted Windows runner connected to the
+#   target domain. Results are committed back to the repository as JSON records,
+#   and a risk register diff is posted as a pull request comment on change.
+#
+# PREREQUISITES:
+#   Self-hosted runner requirements:
+#     - Windows Server 2019+ or Windows 10+ (domain-joined, or use targets.psd1)
+#     - PowerShell 5.1+
+#     - Minimum privilege: AnyAuthUser for core collectors; LocalAdmin for Host-OS
+#     - Runner registered at: Settings → Actions → Runners → New self-hosted runner
+#     - Runner label: 'ad-assessment' (update runs-on below to match your label)
+#
+#   Required secrets (Settings → Secrets → Actions):
+#     AD_DOMAIN           — FQDN of the target domain (e.g., corp.example.com)
+#     NOTIFICATION_EMAIL  — Optional; email for workflow failure notification
+#
+#   Optional secrets (for enrichment collectors):
+#     VULNCHECK_API_TOKEN — VulnCheck API token for enriched CVE data
+#     BLOODHOUND_API_URL  — BloodHound CE API base URL
+#     BLOODHOUND_API_KEY  — BloodHound CE API key
+#
+# SECURITY NOTES:
+#   - The runner MUST run as a low-privilege service account (not SYSTEM or admin
+#     unless Host-OS collection is explicitly required).
+#   - Binary downloads happen at runtime via Install-Prereqs.ps1 which verifies
+#     SHA256 hashes — do not cache tools/bin/ in the runner.
+#   - JSON records are committed back to the repo. Review .gitignore to confirm
+#     sensitive data (PurpleKnight exports, settings.local.psd1) is excluded.
+#   - This workflow does NOT push force or amend — each run creates a new commit.
+#
+# SCHEDULING:
+#   Default: weekly on Monday at 06:00 UTC. Adjust cron below.
+#   Manual trigger: Actions → scheduled-recon → Run workflow
+
+name: AD Assessment — Scheduled Run
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Weekly — Monday 06:00 UTC
+  workflow_dispatch:        # Manual trigger from GitHub Actions UI
+    inputs:
+      collectors:
+        description: 'Comma-separated collector names to run (leave blank for all)'
+        required: false
+        default: ''
+      skip_binaries:
+        description: 'Skip binary downloads (use pre-staged tools)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write           # Commit run records back to repo
+  pull-requests: write      # Post drift comment on open PRs
+
+jobs:
+  assess:
+    name: Run AD Assessment
+    runs-on: [self-hosted, windows, ad-assessment]
+    timeout-minutes: 120
+
+    env:
+      REPO_ROOT:    ${{ github.workspace }}
+      RUN_ID:       ''   # Set by assessment step
+      VULNCHECK_API_TOKEN: ${{ secrets.VULNCHECK_API_TOKEN }}
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0   # Full history for drift comparison
+
+      # ── 2. Bootstrap ─────────────────────────────────────────────────────────
+      - name: Bootstrap — Install prerequisites
+        if: ${{ github.event.inputs.skip_binaries != 'true' }}
+        shell: pwsh
+        run: |
+          Set-Location $env:REPO_ROOT
+          .\bootstrap\Install-Prereqs.ps1 -SkipManualBinaries
+        env:
+          SKIP_MANUAL: 'true'
+
+      # ── 3. Write runtime settings ────────────────────────────────────────────
+      - name: Write runtime settings override
+        shell: pwsh
+        run: |
+          $overrides = @{
+              VulnCheckApiToken = $env:VULNCHECK_API_TOKEN
+              GitCommitRuns     = $false  # Handled by this workflow; not the script
+              OfflineMode       = ($env:SKIP_BINARIES -eq 'true')
+          }
+          $content = "@{`n"
+          foreach ($kv in $overrides.GetEnumerator()) {
+              $val = if ($kv.Value -is [bool]) { "`$$($kv.Value.ToString().ToLower())" }
+                     elseif ($kv.Value) { "'$($kv.Value)'" }
+                     else { "''" }
+              $content += "    $($kv.Key) = $val`n"
+          }
+          $content += "}`n"
+          $content | Set-Content "$env:REPO_ROOT\config\settings.local.psd1" -Encoding UTF8
+          Write-Host "Runtime settings written."
+        env:
+          SKIP_BINARIES: ${{ github.event.inputs.skip_binaries }}
+
+      # ── 4. Run assessment ────────────────────────────────────────────────────
+      - name: Run AD assessment
+        id: assessment
+        shell: pwsh
+        run: |
+          Set-Location $env:REPO_ROOT
+
+          # Load framework inline (non-interactive pipeline mode)
+          . .\framework\Schema.ps1
+          . .\framework\CollectorRegistry.ps1
+          . .\framework\RunContext.ps1
+          . .\framework\Repository.ps1
+
+          $ctx = New-RunContext `
+              -RepoRoot         $env:REPO_ROOT `
+              -HeldPrivileges   @('AnyAuthUser') `
+              -PipelineMode     $true
+
+          Initialize-RunRepository -RunContext $ctx
+
+          # Run selected collectors (or all)
+          $filter = '${{ github.event.inputs.collectors }}'
+          . .\Invoke-ADRecon.ps1 -RunContext $ctx -Settings (
+              Import-PowerShellDataFile "$env:REPO_ROOT\config\settings.psd1"
+          ) -CollectorFilter $(if($filter){$filter -split ','}else{$null})
+
+          # Generate reports
+          .\report\New-RiskRegister.ps1 -RunRoot $ctx.RunRoot -RepoRoot $env:REPO_ROOT
+          .\report\New-WikiPages.ps1    -RunRoot $ctx.RunRoot -RepoRoot $env:REPO_ROOT
+          .\report\New-ValidationCards.ps1 -RunRoot $ctx.RunRoot -RepoRoot $env:REPO_ROOT
+
+          # Drift comparison against most recent previous run
+          $prevRun = .\diff\Compare-ReconRuns.ps1 `
+              -RepoRoot $env:REPO_ROOT -NewRunId $ctx.RunId -AutoSelectPrevious
+          if ($prevRun) {
+              Write-Host "::notice::Drift detected — see diff report"
+          }
+
+          # Export RunId for subsequent steps
+          echo "RUN_ID=$($ctx.RunId)" >> $env:GITHUB_OUTPUT
+          echo "RUN_ROOT=$($ctx.RunRoot)" >> $env:GITHUB_OUTPUT
+        env:
+          VULNCHECK_API_TOKEN: ${{ secrets.VULNCHECK_API_TOKEN }}
+
+      # ── 5. Commit results ────────────────────────────────────────────────────
+      - name: Commit run records to repository
+        shell: pwsh
+        run: |
+          Set-Location $env:REPO_ROOT
+          $runId = "${{ steps.assessment.outputs.RUN_ID }}"
+
+          git config user.name  "ad-recon-toolkit[bot]"
+          git config user.email "noreply@github.com"
+
+          # Stage run records and report (exclude gitignored artifacts and secrets)
+          git add "output/runs/$runId/" "output/reports/" "output/wiki/" "output/validation/" 2>$null
+          $staged = (git diff --cached --name-only 2>$null)
+          if ($staged) {
+              git commit -m "chore(recon): scheduled run $runId [skip ci]`n`nCollectors: ${{ github.event.inputs.collectors || 'all' }}`nRun host: $env:COMPUTERNAME`nBranch: ${{ github.ref_name }}"
+              git push origin ${{ github.ref_name }}
+              Write-Host "::notice::Run $runId committed."
+          } else {
+              Write-Host "::notice::No new records to commit."
+          }
+
+      # ── 6. Post drift summary as workflow summary ────────────────────────────
+      - name: Post assessment summary
+        if: always()
+        shell: pwsh
+        run: |
+          $runId    = "${{ steps.assessment.outputs.RUN_ID }}"
+          $repoRoot = $env:REPO_ROOT
+          $riskReg  = Get-ChildItem "$repoRoot\output\reports\risk-register-$runId.md" -EA SilentlyContinue
+
+          if ($riskReg) {
+              $content = Get-Content $riskReg.FullName -Raw
+              # Post to GitHub step summary (truncated if large)
+              $summary = $content.Substring(0, [Math]::Min(65000, $content.Length))
+              $summary | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+              "**Assessment run $runId completed — no risk register generated.**" |
+                  Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+
+      # ── 7. Cleanup runtime secrets ────────────────────────────────────────────
+      - name: Remove runtime settings override
+        if: always()
+        shell: pwsh
+        run: |
+          $path = "$env:REPO_ROOT\config\settings.local.psd1"
+          if (Test-Path $path) {
+              Remove-Item $path -Force
+              Write-Host "Runtime settings.local.psd1 removed."
+          }

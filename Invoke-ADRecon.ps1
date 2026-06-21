@@ -15,12 +15,18 @@
 
 .PARAMETER Settings
     Hashtable from config/settings.psd1.
+
+.PARAMETER CollectorFilter
+    Optional array of collector names to run. When supplied, only collectors
+    whose Name matches an entry are executed. Case-insensitive. Supports
+    partial matches (e.g., 'AD-Core','DNS'). Leave $null to run all eligible.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][PSCustomObject]$RunContext,
-    [string]$CollectorsPath = (Join-Path $PSScriptRoot 'collectors'),
-    [hashtable]$Settings    = @{}
+    [string]$CollectorsPath  = (Join-Path $PSScriptRoot 'collectors'),
+    [hashtable]$Settings     = @{},
+    [string[]]$CollectorFilter = $null
 )
 
 $ErrorActionPreference = 'Continue'
@@ -49,6 +55,15 @@ Write-Host "[Orchestrator] Held privileges: $($RunContext.HeldPrivileges -join '
 Write-Host ""
 
 foreach ($c in $collectors) {
+    # Apply collector filter (pipeline mode or partial run)
+    if ($CollectorFilter -and $CollectorFilter.Count -gt 0) {
+        $matched = $CollectorFilter | Where-Object { $c.Name -ieq $_ -or $c.Name -ilike "*$_*" }
+        if (-not $matched) {
+            $statusLog.Add(@{ collector = $c.Name; status = 'filtered'; reason = 'not in CollectorFilter' })
+            continue
+        }
+    }
+
     if (-not (Test-CollectorEligible -Collector $c -HeldPrivileges $RunContext.HeldPrivileges)) {
         Write-Host "  [SKIP] $($c.Name)  — requires $($c.MinPrivilege)"
         $statusLog.Add(@{
