@@ -648,4 +648,166 @@
         MinPriv        = 'LocalAdmin'
     }
 
+    # ── GPO-Settings findings ──────────────────────────────────────────────────
+
+    'GPO-001' = @{
+        Techniques     = @('T1552.006')
+        TechniqueNames = @('Unsecured Credentials: Group Policy Preferences')
+        AtomicTests    = @(
+            @{
+                Guid        = 'e9a4bc37-4f01-4695-93e9-f5e9405abca8'
+                Name        = 'Search SYSVOL for cpassword strings — Get-ChildItem + Select-String (read-only file scan)'
+                Destructive = $false
+                Rollback    = 'Read-only filesystem traversal — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(5140)
+        BlastRadius    = 'SYSVOL read — no credential decryption performed'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-002' = @{
+        Techniques     = @('T1078')
+        TechniqueNames = @('Valid Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-GPOReport — confirm ScreenSaverIsSecure setting absent in all GPOs (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only GPO query — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'GPO XML enumeration only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-003' = @{
+        Techniques     = @('T1003.001')
+        TechniqueNames = @('OS Credential Dumping: LSASS Memory')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm UseLogonCredential not set to 0 in any GPO via Get-GPOReport (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'GPO enumeration — no state change'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-004' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm EnableMulticast not set to 0 in any GPO — Get-GPOReport scan (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'GPO enumeration — no packets sent'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-005' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm NBT-NS TcpipNetbiosOptions via Get-CimInstance Win32_NetworkAdapterConfiguration — per host (read-only)'
+                Destructive = $false
+                Rollback    = 'WMI read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'WMI read only — no packets sent'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-006' = @{
+        Techniques     = @('T1003.001')
+        TechniqueNames = @('OS Credential Dumping: LSASS Memory')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm RunAsPPL not enforced in any GPO via Get-GPOReport (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'GPO enumeration — no state change'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-007' = @{
+        Techniques     = @('T1210')
+        TechniqueNames = @('Exploitation of Remote Services')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm SMB1=0 not set in any GPO via Get-GPOReport (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(3000)
+        BlastRadius    = 'GPO enumeration — no exploitation'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-008' = @{
+        Techniques     = @('T1187')
+        TechniqueNames = @('Forced Authentication')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm Spooler not set to Disabled in any DC-scoped GPO — Get-GPOReport (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(7036)
+        BlastRadius    = 'GPO enumeration — no service change'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-009' = @{
+        Techniques     = @('T1562.002')
+        TechniqueNames = @('Impair Defenses: Disable Windows Event Logging')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm Advanced Audit Policy Configuration absent from all GPOs — Get-GPOReport (read-only)'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4719)
+        BlastRadius    = 'GPO enumeration — no state change'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-010' = @{
+        Techniques     = @('T1484.001')
+        TechniqueNames = @('Domain Policy Modification: Group Policy Modification')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Group3r analysis — read-only GPO and SYSVOL scan; review artifact for findings'
+                Destructive = $false
+                Rollback    = 'Read-only GPO/SYSVOL traversal — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(5136)
+        BlastRadius    = 'Read-only GPO analysis via Group3r'
+        MinPriv        = 'AnyAuthUser'
+    }
+
 }
