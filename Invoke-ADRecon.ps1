@@ -1,0 +1,90 @@
+<#
+.SYNOPSIS
+    Manifest-driven collector orchestrator.
+
+.DESCRIPTION
+    Loads all *.collector.ps1 files, runs each against the supplied RunContext
+    based on held privileges, and persists normalized JSON output.
+    Called by Start-Assessment.ps1 — not intended to be run directly.
+
+.PARAMETER RunContext
+    PSCustomObject from New-RunContext.
+
+.PARAMETER CollectorsPath
+    Path to the collectors directory. Defaults to .\collectors.
+
+.PARAMETER Settings
+    Hashtable from config/settings.psd1.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][PSCustomObject]$RunContext,
+    [string]$CollectorsPath = (Join-Path $PSScriptRoot 'collectors'),
+    [hashtable]$Settings    = @{}
+)
+
+$ErrorActionPreference = 'Continue'
+
+# Load framework modules (idempotent — functions are just redefined if already loaded)
+foreach ($module in @('Schema','CollectorRegistry','RunContext','Repository')) {
+    . (Join-Path $PSScriptRoot "framework\$module.ps1")
+}
+
+# Register all collectors found in the collectors directory
+Get-ChildItem -Path $CollectorsPath -Filter '*.collector.ps1' -ErrorAction Stop |
+    Sort-Object Name |
+    ForEach-Object {
+        Write-Verbose "[Orchestrator] Loading: $($_.Name)"
+        . $_.FullName
+    }
+
+$collectors = @(Get-RegisteredCollectors)
+$statusLog  = [System.Collections.Generic.List[hashtable]]::new()
+$paths      = Initialize-RunRepository -RepoRoot $RunContext.RepoRoot -RunId $RunContext.RunId
+
+Write-Host ""
+Write-Host "[Orchestrator] Run $($RunContext.RunId)"
+Write-Host "[Orchestrator] $($collectors.Count) collector(s) registered"
+Write-Host "[Orchestrator] Held privileges: $($RunContext.HeldPrivileges -join ', ')"
+Write-Host ""
+
+foreach ($c in $collectors) {
+    if (-not (Test-CollectorEligible -Collector $c -HeldPrivileges $RunContext.HeldPrivileges)) {
+        Write-Host "  [SKIP] $($c.Name)  — requires $($c.MinPrivilege)"
+        $statusLog.Add(@{
+            collector = $c.Name
+            status    = 'skipped'
+            reason    = "requires $($c.MinPrivilege); held: $($RunContext.HeldPrivileges -join ',')"
+        })
+        continue
+    }
+
+    Write-Host "  [RUN ] $($c.Name)"
+    try {
+        $records = @(& $c.Invoke -RunContext $RunContext -Settings $Settings -RunRoot $paths.RunRoot)
+        $count   = 0
+        foreach ($r in $records) {
+            if ($null -ne $r) {
+                Save-ReconRecord -Record $r -RunRoot $paths.RunRoot
+                $count++
+            }
+        }
+        Write-Host "         $count record(s)"
+        $statusLog.Add(@{ collector = $c.Name; status = 'completed'; records = $count })
+    } catch {
+        Write-Warning "  [FAIL] $($c.Name): $_"
+        $err = New-CollectionError -Collector $c.Name -Target $RunContext.RunHost `
+            -ErrorMessage $_.ToString() -RunId $RunContext.RunId
+        Save-ReconRecord -Record $err -RunRoot $paths.RunRoot
+        $statusLog.Add(@{ collector = $c.Name; status = 'failed'; error = $_.ToString() })
+    }
+}
+
+Save-RunManifest  -RunContext $RunContext -RunRoot $paths.RunRoot -CollectorStatus $statusLog.ToArray()
+Update-RunIndex   -RepoRoot $RunContext.RepoRoot -RunId $RunContext.RunId -RunRoot $paths.RunRoot
+
+Write-Host ""
+Write-Host "[Orchestrator] Complete — $($paths.RunRoot)"
+Write-Host ""
+
+return $paths

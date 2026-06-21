@@ -1,0 +1,20 @@
+# Vendored binaries — fetched and verified at runtime by Install-Prereqs.ps1
+tools/bin/
+tools/kev/
+
+# Raw run artifacts (large zips / XML)
+output/runs/*/artifacts/
+
+# Do NOT ignore output/runs/*/  — JSON records are the source of truth and must be committed
+!output/runs/
+!output/runs/**/*.json
+
+# Local config overrides
+config/settings.local.psd1
+config/targets.psd1
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
