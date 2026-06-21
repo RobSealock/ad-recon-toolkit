@@ -248,6 +248,138 @@
         MinPriv     = 'AnyAuthUser'
     }
 
+    # ── DNS findings ──────────────────────────────────────────────────────────
+
+    'DNS-001' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm zone dynamic update policy via Get-DnsServerZone (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only DNS zone query — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(770)
+        BlastRadius    = 'DNS query only'
+        MinPriv        = 'DNSAdmin'
+    }
+
+    'DNS-002' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm wildcard record via Resolve-DnsName * in zone (read-only)'
+                Destructive = $false
+                Rollback    = 'DNS query — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'DNS resolution query only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'DNS-004' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Review AD DNS object whenCreated attributes — confirm each new record is authorised'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(770,771)
+        BlastRadius    = 'LDAP read only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'DNS-005' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Cross-reference DNS A records against AD computer objects — identify stale/rogue entries (LDAP read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'DNS-006' = @{
+        Techniques     = @('T1543.003')
+        TechniqueNames = @('Create or Modify System Process: Windows Service')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate DnsAdmins group membership via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP group query only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    # ── Firewall findings ──────────────────────────────────────────────────────
+
+    'FW-001' = @{
+        Techniques     = @('T1562.004')
+        TechniqueNames = @('Impair Defenses: Disable or Modify System Firewall')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-NetFirewallProfile — confirm profile state (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(2003,2004)
+        BlastRadius    = 'Registry/WMI read — no change'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'FW-002' = @{
+        Techniques     = @('T1562.004')
+        TechniqueNames = @('Impair Defenses: Disable or Modify System Firewall')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-NetFirewallProfile DefaultInboundAction — confirm allow-all default (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(2003)
+        BlastRadius    = 'Read-only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'FW-004' = @{
+        Techniques     = @('T1562.004')
+        TechniqueNames = @('Impair Defenses: Disable or Modify System Firewall')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Test-NetConnection to sensitive port from authorised source — confirm reachability (non-destructive probe)'
+                Destructive = $false
+                Rollback    = 'TCP SYN probe — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(5156,5157)
+        BlastRadius    = 'Single TCP connection attempt'
+        MinPriv        = 'AnyAuthUser'
+    }
+
     'PC-001' = @{
         Techniques   = @()
         TechniqueNames = @()
