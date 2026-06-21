@@ -23,7 +23,7 @@
             # File:       PingCastle_3.5.1.33.zip  →  extract PingCastle.exe
             Url         = 'https://github.com/netwrix/pingcastle/releases/download/3.5.1.33/PingCastle_3.5.1.33.zip'
             Version     = '3.5.1.33'
-            Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
+            Sha256      = 'C328AED079954A949C9ED53751DC8A88720ACF2D87811B905F7B9234C9848696'
             TargetPath  = 'tools\bin\PingCastle.exe'
             ZipEntry    = 'PingCastle.exe'
             Enabled     = $true
@@ -38,7 +38,7 @@
             # File:       SharpHound_v2.13.0_windows_x86.zip  →  extract SharpHound.exe
             Url         = 'https://github.com/SpecterOps/SharpHound/releases/download/v2.13.0/SharpHound_v2.13.0_windows_x86.zip'
             Version     = 'v2.13.0'
-            Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
+            Sha256      = '2A6B515DC1908F33C3BFE887347270D429496113102D5DE9F74E9063CD5567AA'
             TargetPath  = 'tools\bin\SharpHound.exe'
             ZipEntry    = 'SharpHound.exe'
             Enabled     = $true
@@ -58,7 +58,7 @@
             # File:       Group3r.exe  (direct exe)
             Url         = 'https://github.com/Group3r/Group3r/releases/download/1.0.69/Group3r.exe'
             Version     = '1.0.69'
-            Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
+            Sha256      = '8F71CF000B5092E214F6E52470B702CE662AD2ED0DEFF86C26728A0E3532EF25'
             TargetPath  = 'tools\bin\Group3r.exe'
             ZipEntry    = $null
             Enabled     = $true
