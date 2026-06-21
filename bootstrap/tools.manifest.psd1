@@ -199,9 +199,9 @@
             Description    = 'Semperis AD security assessment tool (125+ indicators). GUI-only — run manually on a DC, then export CSV for ingestion by the PurpleKnight collector.'
             Url            = $null
             RegistrationUrl= 'https://www.semperis.com/purple-knight/'
-            Version        = 'CONFIRM_FROM_DOWNLOAD'
+            Version        = '5.0.2506.11001'
             Sha256         = $null    # operator-verified; not auto-checked
-            TargetPath     = 'tools\bin\PurpleKnight.exe'
+            TargetPath     = 'tools\bin\PK_Community_5.0\PurpleKnight.exe'
             ZipEntry       = $null
             Enabled        = $true
             ToggleKey      = 'EnablePurpleKnight'
