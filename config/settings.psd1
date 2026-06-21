@@ -9,6 +9,7 @@
     EnableSharpHound    = $true
     EnableLocksmith     = $true
     EnableGroup3r       = $true
+    EnablePurpleKnight  = $true
     EnableHardeningKitty= $false   # optional — enable for BestPractice-Baseline collector
 
     # ── BloodHound CE ──────────────────────────────────────────────────────

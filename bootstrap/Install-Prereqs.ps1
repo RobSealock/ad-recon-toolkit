@@ -118,6 +118,24 @@ Write-Step 'Checking vendored binaries...'
 $binDir = Join-Path $RepoRoot 'tools\bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
+# ── 4a. Manual binaries — check staged, print instructions if missing ─────────
+Write-Step 'Checking manual binaries (registration-gated)...'
+foreach ($tool in @($manifest.ManualBinaries)) {
+    $targetFull = Join-Path $RepoRoot $tool.TargetPath
+    if (Test-Path $targetFull) {
+        Write-OK "$($tool.Name) staged at $($tool.TargetPath)"
+    } else {
+        Write-Warn "$($tool.Name) NOT staged — manual setup required:"
+        Write-Host "         Registration : $($tool.RegistrationUrl)" -ForegroundColor Cyan
+        foreach ($note in $tool.Notes) {
+            Write-Host "         $note" -ForegroundColor Cyan
+        }
+        if ($tool.ExportSetting) {
+            Write-Host "         Then set '$($tool.ExportSetting)' in config\settings.psd1 to the CSV export path." -ForegroundColor Cyan
+        }
+    }
+}
+
 $allBinaries = @($manifest.Binaries) + @($manifest.OptionalBinaries)
 
 function Get-BinaryFileVersion {
