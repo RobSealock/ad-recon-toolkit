@@ -6,6 +6,232 @@
 
 @{
 
+    # ── AD-Core domain findings ────────────────────────────────────────────
+
+    'ADC-001' = @{
+        Techniques     = @('T1136.002')
+        TechniqueNames = @('Create Account: Domain Account')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read ms-DS-MachineAccountQuota via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4741)
+        BlastRadius    = 'LDAP read — no machine joined'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-002' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read msDS-Behavior-Version from domain NC via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP attribute read'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-003' = @{
+        Techniques     = @('T1558.001')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: Golden Ticket')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read krbtgt pwdLastSet via LDAP to confirm password age (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — no ticket forged'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-004' = @{
+        Techniques     = @('T1558.004')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: AS-REP Roasting')
+        AtomicTests    = @(
+            @{
+                Guid        = 'cf8d7d7e-8f1e-4c7a-9e8d-6d3e7a8b1c3e'
+                Name        = 'Get-NPUsers (Impacket) or Get-ASREPHash (PowerView) — enumerate and collect AS-REP hashes'
+                Destructive = $false
+                Rollback    = 'AS-REQ packets to KDC — no account state change, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4768)
+        BlastRadius    = 'AS-REQ/AS-REP exchange — unauthenticated, targeted at flagged accounts only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-005' = @{
+        Techniques     = @('T1558.003')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: Kerberoasting')
+        AtomicTests    = @(
+            @{
+                Guid        = '3f987809-3681-43c8-bcd8-b3ff3a28533a'
+                Name        = 'Request TGS for flagged SPN accounts via PowerShell (per-SPN, not bulk)'
+                Destructive = $false
+                Rollback    = 'TGS-REQ — read-only Kerberos exchange, no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'TGS-REQ for flagged service accounts — authenticated'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-006' = @{
+        Techniques     = @('T1558')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate unconstrained delegation computers via LDAP filter (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — no coercion performed'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-007' = @{
+        Techniques     = @('T1003.006')
+        TechniqueNames = @('OS Credential Dumping: DCSync')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read domain NC DACL for Replicating Directory Changes All right (read-only ACL enumeration)'
+                Destructive = $false
+                Rollback    = 'ACL read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4662)
+        BlastRadius    = 'ACL enumeration — no replication initiated'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-008' = @{
+        Techniques     = @('T1098')
+        TechniqueNames = @('Account Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate accounts with adminCount=1 not in current privileged groups via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-009' = @{
+        Techniques     = @('T1110.001')
+        TechniqueNames = @('Brute Force: Password Guessing')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read minPwdLength from domain NC via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP attribute read'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-010' = @{
+        Techniques     = @('T1134.005')
+        TechniqueNames = @('Access Token Manipulation: SID-History Injection')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read trustAttributes for each trust via LDAP — confirm QUARANTINED_DOMAIN bit (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'LDAP read — no SID injected'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-011' = @{
+        Techniques     = @('T1003.001')
+        TechniqueNames = @('OS Credential Dumping: LSASS Memory')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate Protected Users group membership via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP group read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read only'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-012' = @{
+        Techniques     = @('T1485')
+        TechniqueNames = @('Data Destruction')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm enabledScopes on Recycle Bin feature container via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — no deletion'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-013' = @{
+        Techniques     = @('T1558.003')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: Kerberoasting')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate userAccountControl bit USE_DES_KEY_ONLY via LDAP filter (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'LDAP filter — no ticket requested'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-014' = @{
+        Techniques     = @('T1098')
+        TechniqueNames = @('Account Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate msDS-AllowedToActOnBehalfOfOtherIdentity via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — no RBCD configured'
+        MinPriv        = 'AnyAuthUser'
+    }
+
     # ── Kerberos attacks ───────────────────────────────────────────────────
 
     'KERBEROAST' = @{
