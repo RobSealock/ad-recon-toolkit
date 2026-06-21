@@ -120,27 +120,81 @@ New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
 $allBinaries = @($manifest.Binaries) + @($manifest.OptionalBinaries)
 
+function Get-BinaryFileVersion {
+    param([string]$Path)
+    try {
+        $v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path).FileVersion
+        # Strip leading 'v' and any build metadata (e.g. "v2.13.0" → "2.13.0")
+        $v = $v -replace '^v','' -replace '\+.*$',''
+        if ($v) { return [System.Version]$v }
+    } catch {}
+    return $null
+}
+
+function Invoke-BinaryDownload {
+    param([hashtable]$Tool, [string]$TargetFull)
+    $tmpFile = Join-Path $env:TEMP "$($Tool.Name)_$([System.IO.Path]::GetRandomFileName()).tmp"
+    try {
+        Invoke-WebRequest -Uri $Tool.Url -OutFile $tmpFile -UseBasicParsing -ErrorAction Stop
+
+        if ($Tool.ZipEntry) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip   = [System.IO.Compression.ZipFile]::OpenRead($tmpFile)
+            $entry = $zip.Entries | Where-Object { $_.Name -eq $Tool.ZipEntry } | Select-Object -First 1
+            if (-not $entry) { $zip.Dispose(); throw "Entry '$($Tool.ZipEntry)' not found in zip" }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $TargetFull, $true)
+            $zip.Dispose()
+        } else {
+            Move-Item $tmpFile $TargetFull -Force
+        }
+
+        if ($Tool.Sha256 -notlike 'PLACEHOLDER*') {
+            $actual = (Get-FileHash $TargetFull -Algorithm SHA256).Hash
+            if ($actual -ne $Tool.Sha256) {
+                Write-Fail "$($Tool.Name) SHA256 mismatch after download — removing"
+                Remove-Item $TargetFull -Force -ErrorAction SilentlyContinue
+                throw "SHA256 mismatch: expected $($Tool.Sha256), got $actual"
+            }
+        }
+        return $true
+    } finally {
+        Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 foreach ($tool in $allBinaries) {
     $targetFull = Join-Path $RepoRoot $tool.TargetPath
+    $exists     = Test-Path $targetFull
 
-    if (Test-Path $targetFull) {
-        # Verify existing binary checksum
-        if ($tool.Sha256 -notlike 'PLACEHOLDER*') {
-            $actual = (Get-FileHash $targetFull -Algorithm SHA256).Hash
-            if ($actual -eq $tool.Sha256) {
-                Write-OK "$($tool.Name) present and verified"
+    # Parse manifest version (strip leading 'v' and metadata)
+    $manifestVerStr = ($tool.Version -replace '^v','' -replace '\+.*$','')
+    $manifestVer    = try { [System.Version]$manifestVerStr } catch { $null }
+
+    # ── Check existing binary ─────────────────────────────────────────────
+    if ($exists) {
+        $existingVer = Get-BinaryFileVersion -Path $targetFull
+
+        if ($existingVer -and $manifestVer) {
+            if ($existingVer -ge $manifestVer) {
+                # Pre-staged binary is at or above manifest version — keep it
+                Write-OK "$($tool.Name) v$existingVer present (manifest: v$manifestVerStr) — no download needed"
+                continue
             } else {
-                Write-Fail "$($tool.Name) SHA256 MISMATCH — removing corrupted file"
-                Remove-Item $targetFull -Force
+                Write-Step "$($tool.Name) v$existingVer found but manifest requires v$manifestVerStr — upgrading"
+                # Fall through to download
             }
         } else {
-            Write-Warn "$($tool.Name) present — SHA256 not yet pinned in manifest (update tools.manifest.psd1)"
+            # Cannot determine version (e.g. SHA256 placeholder) — keep existing and warn
+            Write-Warn "$($tool.Name) present — version check unavailable; keeping existing binary"
+            continue
         }
-        continue
     }
 
+    # ── Offline: use whatever is present, or warn if absent ──────────────
     if ($OfflineOnly) {
-        if ($tool.Optional) {
+        if ($exists) {
+            Write-Warn "$($tool.Name) offline mode — using existing binary as-is"
+        } elseif ($tool.Optional) {
             Write-Warn "$($tool.Name) not found (offline, optional — skipping)"
         } else {
             Write-Warn "$($tool.Name) not found (offline — pre-stage to $($tool.TargetPath))"
@@ -148,37 +202,19 @@ foreach ($tool in $allBinaries) {
         continue
     }
 
-    Write-Step "Downloading $($tool.Name) from $($tool.Url)"
+    # ── Download ──────────────────────────────────────────────────────────
+    Write-Step "Downloading $($tool.Name) v$manifestVerStr"
     try {
-        $tmpFile = Join-Path $env:TEMP "$($tool.Name).tmp"
-        Invoke-WebRequest -Uri $tool.Url -OutFile $tmpFile -UseBasicParsing -ErrorAction Stop
-
-        if ($tool.ZipEntry) {
-            # Extract single file from zip
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            $zip = [System.IO.Compression.ZipFile]::OpenRead($tmpFile)
-            $entry = $zip.Entries | Where-Object { $_.Name -eq $tool.ZipEntry } | Select-Object -First 1
-            if (-not $entry) { throw "Entry '$($tool.ZipEntry)' not found in zip" }
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $targetFull, $true)
-            $zip.Dispose()
-        } else {
-            Move-Item $tmpFile $targetFull -Force
-        }
-
-        if ($tool.Sha256 -notlike 'PLACEHOLDER*') {
-            $actual = (Get-FileHash $targetFull -Algorithm SHA256).Hash
-            if ($actual -ne $tool.Sha256) {
-                Write-Fail "$($tool.Name) SHA256 mismatch after download — ABORTING"
-                Remove-Item $targetFull -Force -ErrorAction SilentlyContinue
-                exit 1
-            }
-        }
-        Write-OK "Downloaded: $($tool.Name) → $($tool.TargetPath)"
+        Invoke-BinaryDownload -Tool $tool -TargetFull $targetFull
+        Write-OK "Downloaded: $($tool.Name) v$manifestVerStr → $($tool.TargetPath)"
     } catch {
-        if ($tool.Optional) {
-            Write-Warn "Could not download optional tool $($tool.Name): $_"
+        if ($exists) {
+            $fallbackVer = Get-BinaryFileVersion -Path $targetFull
+            Write-Warn "$($tool.Name) download failed — using pre-staged v$fallbackVer as fallback: $_"
+        } elseif ($tool.Optional) {
+            Write-Warn "$($tool.Name) download failed (optional — skipping): $_"
         } else {
-            Write-Warn "Could not download $($tool.Name): $_  (collector will be skipped)"
+            Write-Warn "$($tool.Name) download failed (collector will be skipped): $_"
         }
     }
 }
