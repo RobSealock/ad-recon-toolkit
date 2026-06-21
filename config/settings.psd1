@@ -9,7 +9,6 @@
     EnableSharpHound    = $true
     EnableLocksmith     = $true
     EnableGroup3r       = $true
-    EnableGrouper2      = $false   # disabled by default (redundant with Group3r)
     EnableHardeningKitty= $false   # optional — enable for BestPractice-Baseline collector
 
     # ── BloodHound CE ──────────────────────────────────────────────────────

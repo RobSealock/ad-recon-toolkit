@@ -20,9 +20,9 @@
             Name        = 'PingCastle'
             Description = 'AD risk assessment and scoring tool (Netwrix)'
             # Download:   https://github.com/netwrix/pingcastle/releases/latest
-            # File:       PingCastle_X.X.X.X.zip  →  extract PingCastle.exe
-            Url         = 'https://github.com/netwrix/pingcastle/releases/download/3.3.0.1/PingCastle_3.3.0.1.zip'
-            Version     = '3.3.0.1'
+            # File:       PingCastle_3.5.1.33.zip  →  extract PingCastle.exe
+            Url         = 'https://github.com/netwrix/pingcastle/releases/download/3.5.1.33/PingCastle_3.5.1.33.zip'
+            Version     = '3.5.1.33'
             Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
             TargetPath  = 'tools\bin\PingCastle.exe'
             ZipEntry    = 'PingCastle.exe'
@@ -35,12 +35,12 @@
             Name        = 'SharpHound'
             Description = 'BloodHound CE data collector — version-match to your BloodHound CE instance'
             # Download:   https://github.com/SpecterOps/SharpHound/releases/latest
-            # File:       SharpHound.exe  (direct exe, no zip)
-            Url         = 'https://github.com/SpecterOps/SharpHound/releases/latest/download/SharpHound.exe'
-            Version     = 'CONFIRM_FROM_RELEASE'
+            # File:       SharpHound_v2.13.0_windows_x86.zip  →  extract SharpHound.exe
+            Url         = 'https://github.com/SpecterOps/SharpHound/releases/download/v2.13.0/SharpHound_v2.13.0_windows_x86.zip'
+            Version     = 'v2.13.0'
             Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
             TargetPath  = 'tools\bin\SharpHound.exe'
-            ZipEntry    = $null
+            ZipEntry    = 'SharpHound.exe'
             Enabled     = $true
             ToggleKey   = 'EnableSharpHound'
             Optional    = $false
@@ -55,31 +55,17 @@
             Name        = 'Group3r'
             Description = 'GPO security analyzer — corroborates GPO-Settings collector'
             # Download:   https://github.com/Group3r/Group3r/releases/latest
-            # File:       Group3r.exe
-            Url         = 'https://github.com/Group3r/Group3r/releases/latest/download/Group3r.exe'
-            Version     = 'CONFIRM_FROM_RELEASE'
+            # File:       Group3r.exe  (direct exe)
+            Url         = 'https://github.com/Group3r/Group3r/releases/download/1.0.69/Group3r.exe'
+            Version     = '1.0.69'
             Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
             TargetPath  = 'tools\bin\Group3r.exe'
             ZipEntry    = $null
             Enabled     = $true
             ToggleKey   = 'EnableGroup3r'
             Optional    = $true
-        },
-
-        @{
-            Name        = 'Grouper2'
-            Description = 'GPO and SYSVOL security auditor (alternative to Group3r)'
-            # Download:   https://github.com/l0ss/Grouper2/releases/latest
-            # File:       Grouper2.exe
-            Url         = 'https://github.com/l0ss/Grouper2/releases/latest/download/Grouper2.exe'
-            Version     = 'CONFIRM_FROM_RELEASE'
-            Sha256      = 'PLACEHOLDER_VERIFY_AFTER_DOWNLOAD'
-            TargetPath  = 'tools\bin\Grouper2.exe'
-            ZipEntry    = $null
-            Enabled     = $false
-            ToggleKey   = 'EnableGrouper2'
-            Optional    = $true
         }
+        # Grouper2 removed — no releases published on GitHub (repo: l0ss/Grouper2)
     )
 
     # ── PowerShell modules (installed from PSGallery) ─────────────────────
