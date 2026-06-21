@@ -8,10 +8,24 @@ function _PurpleKnight_Collect {
 
     $records    = [System.Collections.Generic.List[object]]::new()
     $runId      = $RunContext.RunId
-    $exportPath = $Settings['PurpleKnightExport']
     $artDir     = Join-Path $RunRoot 'artifacts'
+    $pkExportDir= Join-Path $RunContext.RepoRoot 'output\purpleknight'
+
+    # Resolve export path: explicit setting > auto-scan output\purpleknight\ > prompt
+    $exportPath = $Settings['PurpleKnightExport']
 
     if (-not $exportPath) {
+        $latest = Get-ChildItem -Path $pkExportDir -Filter '*.csv' -ErrorAction SilentlyContinue |
+                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($latest) {
+            $exportPath = $latest.FullName
+            Write-Host "         [PurpleKnight] Auto-discovered export: $($latest.Name)"
+        }
+    }
+
+    if (-not $exportPath) {
+        Write-Host "         [PurpleKnight] No export found — continuing without PurpleKnight data."
+        Write-Host "         Save a PurpleKnight CSV export to: $pkExportDir"
         $records.Add((New-ReconRecord `
             -Collector  'PurpleKnight' `
             -ObjectType 'collection-status' `
@@ -19,9 +33,9 @@ function _PurpleKnight_Collect {
             -Category   'config' `
             -Tier       'T0' `
             -Attributes @{
-                status  = 'skipped'
-                reason  = 'PurpleKnightExport not set in settings.psd1. Run PurpleKnight manually, export the report, then set the path.'
-                infoUrl = 'https://purple-knight.com/'
+                status     = 'no-export'
+                exportDir  = $pkExportDir
+                instruction= 'Run PurpleKnight manually on a DC, export CSV, save to output\purpleknight\'
             } `
             -RunId $runId))
         return $records

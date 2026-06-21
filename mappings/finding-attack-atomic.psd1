@@ -390,4 +390,262 @@
         Note        = 'PingCastle aggregate score — see raw artifact for per-rule findings'
     }
 
+    # ── Host-OS findings ───────────────────────────────────────────────────────
+
+    'HOST-001' = @{
+        Techniques     = @('T1072')
+        TechniqueNames = @('Software Deployment Tools')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-WindowsFeature — confirm installed roles on DC (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'WinRM read — no state change'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-002' = @{
+        Techniques     = @('T1543.003')
+        TechniqueNames = @('Create or Modify System Process: Windows Service')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-CimInstance Win32_Service — enumerate service accounts (read-only)'
+                Destructive = $false
+                Rollback    = 'WMI read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'WMI read-only'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-003' = @{
+        Techniques     = @('T1574.009')
+        TechniqueNames = @('Hijack Execution Flow: Path Interception by Unquoted Path')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Review Get-CimInstance Win32_Service PathName for unquoted spaces (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'WMI read-only'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-004' = @{
+        Techniques     = @('T1187','T1068')
+        TechniqueNames = @('Forced Authentication','Exploitation for Privilege Escalation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-Service Spooler — confirm running state on DC (read-only)'
+                Destructive = $false
+                Rollback    = 'Service state query — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(7036)
+        BlastRadius    = 'Service query — read-only, no coercion performed'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-005' = @{
+        Techniques     = @('T1187')
+        TechniqueNames = @('Forced Authentication')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-Service WebClient — confirm running state (read-only)'
+                Destructive = $false
+                Rollback    = 'Service state query — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(7036)
+        BlastRadius    = 'Service query — read-only'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-006' = @{
+        Techniques     = @('T1210')
+        TechniqueNames = @('Exploitation of Remote Services')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm SMBv1 registry key (HKLM\...\LanmanServer\Parameters SMB1) — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(3000)
+        BlastRadius    = 'Registry read — no state change'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-007' = @{
+        Techniques     = @('T1021.001')
+        TechniqueNames = @('Remote Services: Remote Desktop Protocol')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm RDP NLA registry value (UserAuthenticationRequired) — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4624)
+        BlastRadius    = 'Registry read — no connection attempted'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-008' = @{
+        Techniques     = @('T1003.001')
+        TechniqueNames = @('OS Credential Dumping: LSASS Memory')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm RunAsPPL registry value — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — no state change'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-009' = @{
+        Techniques     = @('T1003.001')
+        TechniqueNames = @('OS Credential Dumping: LSASS Memory')
+        AtomicTests    = @(
+            @{
+                Guid        = '758c36b8-8c38-4c82-8e48-f6c8b5c1d1c4'
+                Name        = 'Enable WDigest via registry — USE IN LAB ONLY; confirms plaintext cred exposure'
+                Destructive = $false
+                Rollback    = 'Set UseLogonCredential=0 and lock workstation to flush cache'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — no credential dump performed in validation'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-010' = @{
+        Techniques     = @('T1078.003')
+        TechniqueNames = @('Valid Accounts: Local Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm LAPS registry keys absent — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — no state change'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-011' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm LDAPServerIntegrity registry value on DC — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(2889)
+        BlastRadius    = 'Registry read — no relay performed'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-012' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm RequireSecuritySignature registry value — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4625)
+        BlastRadius    = 'Registry read — no relay performed'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-013' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Confirm LLMNR EnableMulticast and NBT-NS TcpipNetbiosOptions registry values — read-only'
+                Destructive = $false
+                Rollback    = 'Registry/WMI read — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry/WMI read — no packets sent'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-014' = @{
+        Techniques     = @('T1078.003')
+        TechniqueNames = @('Valid Accounts: Local Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-LocalUser Administrator — confirm enabled state and PasswordLastSet (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4625)
+        BlastRadius    = 'Local account query — no login attempted'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-015' = @{
+        Techniques     = @('T1039')
+        TechniqueNames = @('Data from Network Shared Drive')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-SmbShareAccess — enumerate share ACLs (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(5140)
+        BlastRadius    = 'SMB share enumeration — no file access'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-016' = @{
+        Techniques     = @('T1053.005')
+        TechniqueNames = @('Scheduled Task/Job: Scheduled Task')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ScheduledTask — enumerate non-Microsoft tasks and their run-as identities (read-only)'
+                Destructive = $false
+                Rollback    = 'Read-only — no rollback needed'
+            }
+        )
+        ConfirmationEvents = @(4698,4702)
+        BlastRadius    = 'Task enumeration — no task triggered'
+        MinPriv        = 'LocalAdmin'
+    }
+
 }

@@ -13,6 +13,12 @@ output/runs/*/artifacts/
 config/settings.local.psd1
 config/targets.psd1
 
+# PurpleKnight exports — sensitive AD security data; store locally, do not commit
+output/purpleknight/*.csv
+output/purpleknight/*.html
+output/purpleknight/*.xlsx
+!output/purpleknight/.gitkeep
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

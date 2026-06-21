@@ -211,13 +211,16 @@
             ExportFormats  = @('csv', 'html')
             Notes          = @(
                 '1. Register and download at: https://www.semperis.com/purple-knight/'
-                '2. Place PurpleKnight.exe in tools\bin\ (or run from its own directory).'
+                '2. Extract to tools\bin\PK_Community_<version>\ (already staged if present).'
                 '3. Run PurpleKnight.exe on a domain-joined machine (DA rights recommended).'
                 '4. When complete, export BOTH formats:'
-                '     CSV  → used by PurpleKnight collector for normalized ingestion'
-                '     HTML → kept as raw artifact for stakeholder review'
-                '5. Set PurpleKnightExport in config\settings.psd1 to the CSV export path.'
-                '6. Re-run Start-Assessment.ps1 — the collector will ingest the CSV automatically.'
+                '     CSV  → save to output\purpleknight\  (auto-ingested by collector)'
+                '     HTML → save to output\purpleknight\  (kept as raw artifact for stakeholder review)'
+                '5. Re-run Start-Assessment.ps1 — the collector auto-scans output\purpleknight\ for the latest CSV.'
+                '6. To override auto-scan, set PurpleKnightExport = <path> in config\settings.psd1.'
+                ''
+                'NOTE: output\purpleknight\ is git-ignored (sensitive AD security data).'
+                '      Do not commit exports to a shared or public repository.'
             )
         }
     )
