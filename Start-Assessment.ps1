@@ -39,6 +39,14 @@ param(
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Version 2
 
+# ── Local module path — prepend tools\modules\ so repo-local modules are found
+# before any system-wide or user-profile installs. Install-Prereqs.ps1 saves
+# all PSGallery modules here via Save-Module rather than Install-Module.
+$localModulesDir = Join-Path $RepoRoot 'tools\modules'
+if (Test-Path $localModulesDir) {
+    $env:PSModulePath = "$localModulesDir$([System.IO.Path]::PathSeparator)$env:PSModulePath"
+}
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '╔══════════════════════════════════════════════════════════════╗'

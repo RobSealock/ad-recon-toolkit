@@ -79,36 +79,57 @@ if ($isServer) {
 }
 
 # ── 3. PowerShell modules ─────────────────────────────────────────────────────
+# Modules are saved to tools\modules\ (local to the repo, gitignored) rather
+# than installed into the user profile. The framework prepends tools\modules\
+# to $env:PSModulePath at startup so collectors find them automatically.
 Write-Step 'Checking PowerShell modules...'
+
+$modulesDir = Join-Path $RepoRoot 'tools\modules'
+New-Item -ItemType Directory -Force -Path $modulesDir | Out-Null
 
 # Ensure TLS 1.2 for PSGallery
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 foreach ($mod in $manifest.PSModules) {
-    $installed = Get-Module -ListAvailable -Name $mod.Name |
-                 Sort-Object Version -Descending | Select-Object -First 1
-    if ($installed -and $installed.Version -ge [version]$mod.MinVersion) {
-        Write-OK "Module $($mod.Name) v$($installed.Version)"
+    # Check tools\modules\ first (repo-local), then fall back to system-wide
+    $localPath  = Join-Path $modulesDir $mod.Name
+    $localMod   = if (Test-Path $localPath) {
+        Get-ChildItem $localPath -Directory | Sort-Object Name -Descending | Select-Object -First 1 |
+            ForEach-Object { [version]($_.Name -replace '^v','') } | Select-Object -First 1
+    } else { $null }
+
+    if ($localMod -and $localMod -ge [version]$mod.MinVersion) {
+        Write-OK "Module $($mod.Name) v$localMod (local: tools\modules\)"
         continue
     }
+
+    # Also accept a system-wide install at or above the required version
+    $sysMod = Get-Module -ListAvailable -Name $mod.Name |
+              Sort-Object Version -Descending | Select-Object -First 1
+    if ($sysMod -and $sysMod.Version -ge [version]$mod.MinVersion) {
+        Write-OK "Module $($mod.Name) v$($sysMod.Version) (system)"
+        continue
+    }
+
     if ($OfflineOnly) {
         if ($mod.Required) {
-            Write-Fail "Required module not installed (offline mode): $($mod.Name)"
+            Write-Warn "Required module not found (offline mode): $($mod.Name) — pre-stage to tools\modules\$($mod.Name)\"
         } else {
-            Write-Warn "Optional module not installed (offline mode): $($mod.Name)"
+            Write-Warn "Optional module not found (offline mode): $($mod.Name)"
         }
         continue
     }
-    Write-Step "Installing module: $($mod.Name) (min $($mod.MinVersion))"
+
+    Write-Step "Saving module: $($mod.Name) (min $($mod.MinVersion)) → tools\modules\"
     try {
-        Install-Module -Name $mod.Name -MinimumVersion $mod.MinVersion `
-            -Repository PSGallery -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-        Write-OK "Installed: $($mod.Name)"
+        Save-Module -Name $mod.Name -MinimumVersion $mod.MinVersion `
+            -Repository PSGallery -Path $modulesDir -Force -ErrorAction Stop
+        Write-OK "Saved: $($mod.Name) → tools\modules\"
     } catch {
         if ($mod.Required) {
-            Write-Fail "Failed to install required module $($mod.Name): $_"
+            Write-Warn "Failed to save required module $($mod.Name): $_"
         } else {
-            Write-Warn "Failed to install optional module $($mod.Name): $_"
+            Write-Warn "Failed to save optional module $($mod.Name): $_"
         }
     }
 }

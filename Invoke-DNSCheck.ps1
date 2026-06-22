@@ -53,6 +53,12 @@ param(
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Version 2
 
+# Prepend repo-local modules directory so Save-Module'd modules are found first
+$_localModules = Join-Path $RepoRoot 'tools\modules'
+if (Test-Path $_localModules) {
+    $env:PSModulePath = "$_localModules$([System.IO.Path]::PathSeparator)$env:PSModulePath"
+}
+
 Write-Host ''
 Write-Host '╔══════════════════════════════════════════════════════════════╗'
 Write-Host '║        ad-recon-toolkit  —  DNS Check (standalone)          ║'
