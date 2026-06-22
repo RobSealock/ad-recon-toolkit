@@ -556,6 +556,22 @@
         MinPriv        = 'AnyAuthUser'
     }
 
+    'DNS-007' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read DACL of CN=MicrosoftDNS via ADSI ObjectSecurity — passive DACL snapshot (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP nTSecurityDescriptor read — no DNS record created or ACE modified'
+            }
+        )
+        ConfirmationEvents = @(5136,5137)
+        BlastRadius    = 'Read-only DACL walk of MicrosoftDNS container and zone objects — no records created'
+        MinPriv        = 'AnyAuthUser'
+    }
+
     # ── Firewall findings ──────────────────────────────────────────────────────
 
     'FW-001' = @{
@@ -871,6 +887,54 @@
         )
         ConfirmationEvents = @(4698,4702)
         BlastRadius    = 'Task enumeration — no task triggered'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-017' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read DsrmAdminLogonBehavior: Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\Lsa DsrmAdminLogonBehavior — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified; safe value is 0 (absent or explicitly set)'
+            }
+        )
+        ConfirmationEvents = @(4624)
+        BlastRadius    = 'Registry read — value 2 enables network DSRM login; confirm value is 0 before incident'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-018' = @{
+        Techniques     = @('T1187')
+        TechniqueNames = @('Forced Authentication')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check EFS service state: Get-Service EFS — confirm Running status (read-only)'
+                Destructive = $false
+                Rollback    = 'Service query — no RPC call made; PetitPotam PoC would trigger outbound NTLM — not run'
+            }
+        )
+        ConfirmationEvents = @(4648)
+        BlastRadius    = 'Service state query — confirm EFS necessity before disabling on DC'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-019' = @{
+        Techniques     = @('T1187')
+        TechniqueNames = @('Forced Authentication')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check DFS Namespace service: Get-Service Dfs — confirm Running status (read-only)'
+                Destructive = $false
+                Rollback    = 'Service query — no DFSCoerce RPC call made; DFSCoerce PoC would trigger outbound auth — not run'
+            }
+        )
+        ConfirmationEvents = @(4648)
+        BlastRadius    = 'Service state query — confirm DFS namespace usage before disabling'
         MinPriv        = 'LocalAdmin'
     }
 

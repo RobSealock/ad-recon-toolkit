@@ -30,6 +30,9 @@
 #   HOST-014  Local Administrator account enabled with stale password (>90 days)
 #   HOST-015  SMB share accessible by Everyone / Authenticated Users (write)
 #   HOST-016  Scheduled task running as domain-privileged identity
+#   HOST-017  DSRM admin logon behavior not restricted (value >= 1 on DC)
+#   HOST-018  EFS service running on DC (PetitPotam / MS-EFSRPC coercion surface)
+#   HOST-019  DFS Namespace service on DC (DFSCoerce / MS-DFSNM coercion surface)
 
 # ── Roles considered unexpected on a Domain Controller ───────────────────────
 $script:_HostOS_UnexpectedDCRoles = @(
@@ -329,6 +332,21 @@ $script:_HostOS_Script = {
         $f.printSpoolerRunning = [bool](Get-Service Spooler  -EA SilentlyContinue | Where-Object { $_.Status -eq 'Running' })
         $f.webClientRunning    = [bool](Get-Service WebClient -EA SilentlyContinue | Where-Object { $_.Status -eq 'Running' })
 
+        # DSRM admin logon behavior (DC-specific registry key)
+        # 0 = DSRM account can only log in when DC is in DSRM (safe default)
+        # 1 = DSRM account can log in when DC AD services are stopped
+        # 2 = DSRM account can always log in over the network (unsafe)
+        $dsrm = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name DsrmAdminLogonBehavior -EA SilentlyContinue).DsrmAdminLogonBehavior
+        $f.dsrmLogonBehavior = if ($null -eq $dsrm) { 0 } else { [int]$dsrm }
+
+        # EFS service state (MS-EFSRPC coercion surface — PetitPotam)
+        $efsSvc = Get-Service 'EFS' -EA SilentlyContinue
+        $f.efsServiceRunning = [bool]($efsSvc -and $efsSvc.Status -eq 'Running')
+
+        # DFS Namespace service state (DFSCoerce coercion surface)
+        $dfsSvc = Get-Service 'Dfs' -EA SilentlyContinue
+        $f.dfsNamespaceRunning = [bool]($dfsSvc -and $dfsSvc.Status -eq 'Running')
+
         # Local Administrator account
         $la = Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
         $f.localAdminEnabled        = if ($la) { [bool]$la.Enabled } else { $false }
@@ -525,6 +543,40 @@ function _HostOS_EvaluateFindings {
                         -Reference 'https://attack.mitre.org/techniques/T1053/005/'))
                 }
             }
+        }
+    }
+
+    $sf = $s.securityFlags
+    if ($sf) {
+        # HOST-017 DSRM admin logon behavior (DC-specific)
+        # Value 2 allows the DSRM local Administrator to authenticate over the network —
+        # a stealthy DC backdoor that survives domain credential resets.
+        if ($isDC -and $sf.dsrmLogonBehavior -ge 1) {
+            $sev  = if ($sf.dsrmLogonBehavior -ge 2) { 'Critical' } else { 'High' }
+            $mode = if ($sf.dsrmLogonBehavior -ge 2) { 'network logon always allowed (value=2)' } else { 'logon allowed when AD services stopped (value=1)' }
+            $findings.Add((New-Finding -Id 'HOST-017' -Severity $sev `
+                -Technique 'T1078.002' `
+                -Description "DSRM admin logon behavior on DC $host is set to $mode. The DSRM local Administrator account has a separate password that survives domain-wide password resets. Value 0 (default) is the only safe setting: DSRM login restricted to Directory Services Restore Mode only. An attacker who has extracted the DSRM hash (via secretsdump or NTDS backup) can use value 2 to authenticate to the DC over the network as local Administrator indefinitely." `
+                -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+        }
+
+        # HOST-018 EFS service running on DC (MS-EFSRPC / PetitPotam coercion surface)
+        # EFS on DCs is generally unnecessary; its RPC interface is used by PetitPotam
+        # to coerce DC authentication to attacker-controlled listener.
+        if ($isDC -and $sf.efsServiceRunning) {
+            $findings.Add((New-Finding -Id 'HOST-018' -Severity 'Medium' `
+                -Technique 'T1187' `
+                -Description "EFS (Encrypting File System) service is running on DC $host. The MS-EFSRPC interface (used by EFS) is the coercion vector for PetitPotam — an unauthenticated attacker can trigger the DC to authenticate outbound to any host, enabling NTLM relay to ADCS (ESC8) or other relay targets. EFS provides no operational value on a DC. Recommended: disable the EFS service on all DCs. Note: patched Windows servers may block unauthenticated PetitPotam but the authenticated variant remains viable." `
+                -Reference 'https://attack.mitre.org/techniques/T1187/'))
+        }
+
+        # HOST-019 DFS Namespace service on DC (DFSCoerce coercion surface)
+        # DFS Namespace (MS-DFSNM) can be used by DFSCoerce to coerce DC authentication.
+        if ($isDC -and $sf.dfsNamespaceRunning) {
+            $findings.Add((New-Finding -Id 'HOST-019' -Severity 'Medium' `
+                -Technique 'T1187' `
+                -Description "DFS Namespace service (Dfs) is running on DC $host. The MS-DFSNM RPC interface is the coercion vector for DFSCoerce — an authenticated attacker can trigger the DC to authenticate to an arbitrary SMB listener, enabling NTLM relay attacks (to ADCS, another DC, or any service not requiring signing). Recommended: disable DFS Namespace on DCs that are not serving DFS namespaces; enable SMB signing and EPA on all relay targets." `
+                -Reference 'https://attack.mitre.org/techniques/T1187/'))
         }
     }
 

@@ -8,10 +8,11 @@
 # Findings emitted:
 #   DNS-001  Zone allows nonsecure dynamic updates (ADIDNS spoofing surface)
 #   DNS-002  Wildcard A/AAAA record exists (catch-all — relay/MitM risk)
-#   DNS-003  WPAD record exists (WPAD hijack surface)
+#   DNS-003  WPAD or ISATAP record exists (WPAD/ISATAP hijack surface)
 #   DNS-004  Record(s) created in past 24 hours (change-alert)
 #   DNS-005  A/AAAA record name not matching any AD computer account (orphaned/rogue)
 #   DNS-006  DnsAdmins group has members (DLL injection path to SYSTEM on DNS server)
+#   DNS-007  Non-Tier-0 principal has CreateChild/WriteProperty on MicrosoftDNS or zone (ADIDNS write)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,80 @@ function _DNS_GetZoneDynamicUpdate {
         }
     } catch {}
     return 'unknown'
+}
+
+function _DNS_CollectZoneWriteRights {
+    param([string]$DomainDn)
+    # Returns list of hashtables: {dn, sid, name, rights, scope}
+    # Scope: 'MicrosoftDNS-container' or 'zone:<zoneName>'
+    # Checks CreateChild and WriteProperty (and GenericWrite/GenericAll) for non-Tier-0 principals.
+    $writers = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $domSid = try {
+            (New-Object System.Security.Principal.SecurityIdentifier(
+                ([adsi]"LDAP://$DomainDn").objectSid.Value, 0)).ToString()
+        } catch { '' }
+
+        $tier0Patterns = @(
+            '^S-1-5-32-544$'                                      # BUILTIN\Administrators
+            '^S-1-5-18$'                                          # SYSTEM
+            '^S-1-3-0$'                                           # Creator Owner
+            '^S-1-5-9$'                                           # Enterprise DCs
+            "^$([regex]::Escape($domSid))-512$"                   # Domain Admins
+            "^$([regex]::Escape($domSid))-519$"                   # Enterprise Admins
+            "^$([regex]::Escape($domSid))-516$"                   # Domain Controllers
+        )
+
+        # Rights masks covering "can write DNS records"
+        $writeRightsMask = [System.DirectoryServices.ActiveDirectoryRights]::CreateChild  -bor
+                           [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty -bor
+                           [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite  -bor
+                           [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+
+        function Test-WriteACE {
+            param([string]$Dn, [string]$Scope)
+            try {
+                $obj = [adsi]"LDAP://$Dn"
+                $sd  = $obj.psbase.ObjectSecurity
+                foreach ($ace in $sd.Access) {
+                    if ($ace.AccessControlType -ne 'Allow') { continue }
+                    if (-not ($ace.ActiveDirectoryRights -band $writeRightsMask)) { continue }
+                    $sid  = try { $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { '' }
+                    $isTier0 = $tier0Patterns | Where-Object { $sid -match $_ }
+                    if (-not $isTier0 -and $sid) {
+                        $name = try { $ace.IdentityReference.ToString() } catch { $sid }
+                        [void]$writers.Add(@{
+                            dn         = $Dn
+                            scope      = $Scope
+                            sid        = $sid
+                            name       = $name
+                            rights     = $ace.ActiveDirectoryRights.ToString()
+                            inherited  = $ace.IsInherited
+                        })
+                    }
+                }
+            } catch {}
+        }
+
+        # Check both AD-integrated DNS partitions' MicrosoftDNS containers
+        foreach ($part in @('DomainDnsZones','ForestDnsZones')) {
+            $containerDn = "CN=MicrosoftDNS,DC=$part,$DomainDn"
+            Test-WriteACE -Dn $containerDn -Scope "MicrosoftDNS-container ($part)"
+
+            # Also check each zone object directly
+            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$containerDn")
+            $s.Filter      = '(objectClass=dnsZone)'
+            $s.SearchScope = 'OneLevel'
+            $s.PageSize    = 100
+            $s.PropertiesToLoad.Add('name') | Out-Null
+            $s.FindAll() | ForEach-Object {
+                $zDn = $_.Path -replace '^LDAP://',''
+                $zName = if ($_.Properties['name'].Count) { $_.Properties['name'][0].ToString() } else { $zDn }
+                Test-WriteACE -Dn $zDn -Scope "zone:$zName"
+            }
+        }
+    } catch { Write-Verbose "[DNS] Zone write-rights DACL walk failed: $_" }
+    return $writers
 }
 
 function _DNS_GetDnsAdmins {
@@ -190,8 +265,8 @@ function _DNS_Collect {
                 # Wildcard record
                 if ($name -eq '*') { $wildcardFound = $true; continue }
 
-                # WPAD record
-                if ($name -ieq 'wpad') { $wpadFound = $true }
+                # WPAD / ISATAP records (both are well-known ADIDNS spoofing targets)
+                if ($name -ieq 'wpad' -or $name -ieq 'isatap') { $wpadFound = $true }
 
                 # 24-hour new record detection
                 if ($node.Created -and ([datetime]$node.Created).ToUniversalTime() -ge $cutoff24h) {
@@ -218,11 +293,11 @@ function _DNS_Collect {
                     -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
             }
 
-            # Emit WPAD finding
+            # Emit WPAD/ISATAP finding
             if ($wpadFound) {
                 $zoneFindings.Add((New-Finding -Id 'DNS-003' -Severity 'Medium' `
                     -Technique 'T1557.001' `
-                    -Description "WPAD record exists in zone '$zoneName'. If WPAD auto-discovery is enabled on clients, this record directs them to a proxy — potential NTLM credential capture." `
+                    -Description "WPAD or ISATAP record exists in zone '$zoneName'. If WPAD auto-discovery is enabled on clients, this record directs them to an attacker-controlled proxy (NTLM credential capture). ISATAP enables IPv6 transition and can be used for relay attacks. Both names are blocked by default in recent Windows but the AD DNS record itself should be removed." `
                     -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
             }
 
@@ -266,13 +341,28 @@ function _DNS_Collect {
                 -RunId          $runId))
         }
 
-        # ── DnsAdmins finding (domain-level) ──────────────────────────────────
+        # ── ADIDNS zone write rights ──────────────────────────────────────────
+        Write-Verbose '[DNS] Checking ADIDNS zone write rights (DACL walk)...'
+        $zoneWriters = _DNS_CollectZoneWriteRights -DomainDn $domainDn
+
+        # ── DnsAdmins + ADIDNS findings (domain-level) ───────────────────────
         $daFindings = [System.Collections.Generic.List[object]]::new()
         if ($dnsAdminMembers.Count -gt 0) {
             $daFindings.Add((New-Finding -Id 'DNS-006' -Severity 'High' `
                 -Technique 'T1543.003' `
                 -Description "DnsAdmins group has $($dnsAdminMembers.Count) member(s). Any DnsAdmin can load an arbitrary DLL into the DNS Server service (running as SYSTEM on DCs) using dnscmd — effective domain compromise path: $($dnsAdminMembers -join '; ')" `
                 -Reference 'https://attack.mitre.org/techniques/T1543/003/'))
+        }
+
+        if ($zoneWriters.Count -gt 0) {
+            # Deduplicate to unique (sid, scope) pairs for the summary
+            $uniqueWriters = $zoneWriters | Sort-Object { "$($_.sid)|$($_.scope)" } -Unique
+            $preview = ($uniqueWriters | Select-Object -First 5 |
+                ForEach-Object { "$($_.name) → $($_.scope)" }) -join '; '
+            $daFindings.Add((New-Finding -Id 'DNS-007' -Severity 'High' `
+                -Technique 'T1557.001' `
+                -Description "$($uniqueWriters.Count) non-Tier-0 ACE(s) grant CreateChild/WriteProperty on the MicrosoftDNS container or individual zone objects: $preview. Direct LDAP write to ADIDNS bypasses the DNS server's secure dynamic update check — any principal with CreateChild can register arbitrary DNS records (including WPAD, wildcard, or spoofed entries) regardless of zone dynamic-update policy." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
         # ── Summary record ────────────────────────────────────────────────────
@@ -291,6 +381,7 @@ function _DNS_Collect {
                 totalOrphaned       = $allOrphaned.Count
                 moduleEnriched      = [bool](Get-Command Get-DnsServerResourceRecord -ErrorAction SilentlyContinue)
                 computerNamesLoaded = $computerNames.Count
+                adidnsWriters       = if ($zoneWriters.Count -gt 0) { $zoneWriters.ToArray() } else { @() }
             } `
             -Findings       $daFindings.ToArray() `
             -RunId          $runId))
