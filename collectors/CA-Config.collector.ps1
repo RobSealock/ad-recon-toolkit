@@ -129,7 +129,7 @@ function _CA_EnumerateCAs {
                 whenCreated         = if ($p['whencreated'].Count) { $p['whencreated'][0].ToString('o') } else { '' }
                 whenChanged         = if ($p['whenchanged'].Count) { $p['whenchanged'][0].ToString('o') } else { '' }
                 distinguishedName   = $_.Properties['adspath'][0].ToString() -replace 'LDAP://',''
-                # editFlags is a CA registry value — not stored in LDAP; collected separately via _CA_CollectCAEditFlags
+                # editFlags is a CA registry value — populated by _CA_CollectCAEditFlags after enumeration
                 editFlags           = 0
             })
         }
@@ -225,6 +225,27 @@ function _CA_EnumerateTemplates {
 # =============================================================================
 # NTAUTH CERTIFICATES CHECK
 # =============================================================================
+
+function _CA_CollectCAEditFlags {
+    param([System.Collections.Generic.List[hashtable]]$CAs)
+    # Reads the CA's editFlags DWORD from its registry via WMI StdRegProv (DCOM, read-only).
+    # Registry path: HKLM\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\<CAName>\
+    #                PolicyModules\CertificateAuthority_MicrosoftDefault.Policy\EditFlags
+    # Returns $CAs with editFlags populated; on access failure, editFlags stays 0 (no false positives).
+    $HKLM       = [uint32]0x80000002
+    $policyKey  = 'SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\{0}\PolicyModules\CertificateAuthority_MicrosoftDefault.Policy'
+    foreach ($ca in $CAs) {
+        if (-not $ca.dnsHostName) { continue }
+        try {
+            $wmi = [wmiclass]"\\$($ca.dnsHostName)\root\default:StdRegProv"
+            $key = $policyKey -f $ca.cn
+            $ret = $wmi.GetDWORDValue($HKLM, $key, 'EditFlags')
+            if ($ret.ReturnValue -eq 0 -and $null -ne $ret.uValue) {
+                $ca.editFlags = [int]$ret.uValue
+            }
+        } catch { Write-Verbose "[CA-Config] editFlags WMI read failed for $($ca.cn) on $($ca.dnsHostName): $_" }
+    }
+}
 
 function _CA_CheckNTAuthCertificates {
     param([string]$ConfigDn)
@@ -605,6 +626,10 @@ function _CAConfig_Collect {
     Write-Host "         [CA-Config] Enumerating Certificate Authorities..."
     $cas = _CA_EnumerateCAs -ConfigDn $configDn
     Write-Host "         $($cas.Count) Enterprise CA(s) found"
+
+    # Read editFlags from each CA's registry via WMI — required for ADCS-010 (ESC6) detection
+    Write-Host "         [CA-Config] Reading CA editFlags (WMI, soft-fail)..."
+    _CA_CollectCAEditFlags -CAs $cas
 
     Write-Host "         [CA-Config] Enumerating certificate templates..."
     $templates = _CA_EnumerateTemplates -ConfigDn $configDn

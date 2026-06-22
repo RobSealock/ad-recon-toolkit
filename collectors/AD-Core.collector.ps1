@@ -1271,12 +1271,9 @@ function _ADCore_Collect {
     }
 
     # ADC-025: Pre-Windows 2000 Compatible Access group has broad members
+    # This built-in group historically included Everyone/Authenticated Users for NT4 compat.
+    # Its presence grants broad read access to AD objects without explicit ACEs.
     $preWin2kDn = "CN=Pre-Windows 2000 Compatible Access,CN=Builtin,$domainDn"
-    $preWin2kMembers = @()
-    try {
-        $grp = [adsi]"LDAP://$preWin2kDn"
-        $preWin2kMembers = @($grp.Properties['member'] | ForEach-Object { $_.ToString() })
-    } catch {}
     try {
         $preWin2kGrp = [adsi]"LDAP://$preWin2kDn"
         $memberSids = @($preWin2kGrp.Properties['member'] | ForEach-Object { $_.ToString() })
@@ -1284,7 +1281,7 @@ function _ADCore_Collect {
         if ($broad.Count -gt 0) {
             $findings.Add((New-Finding -Id 'ADC-025' -Severity 'High' `
                 -Technique 'T1135' `
-                -Description "Pre-Windows 2000 Compatible Access group contains broad identity: $($broad -join '; '). This built-in group grants access to read various AD objects without explicit access — having 'Everyone' or 'Authenticated Users' here effectively allows anonymous or any-user enumeration of user and group objects compatible with Windows NT 4.0 access semantics. Remove broad identities; the group should be empty or contain only legacy-required specific accounts." `
+                -Description "Pre-Windows 2000 Compatible Access group contains broad identity: $($broad -join '; '). This built-in group grants read access to various AD objects via legacy NT4 compatibility semantics. Having 'Everyone' or 'Authenticated Users' here effectively allows any domain user (or anonymous on older configs) to enumerate user and group objects. Remove broad identities; the group should be empty on all modern domains." `
                 -Reference 'https://attack.mitre.org/techniques/T1135/'))
         }
     } catch {}
