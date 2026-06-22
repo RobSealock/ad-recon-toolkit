@@ -225,6 +225,17 @@ if ($pipPackages.Count -gt 0) {
     }
 }
 
+# ── 3c. Split-part reassembly ─────────────────────────────────────────────────
+# PurpleKnight.exe exceeds GitHub's 100 MB limit and is stored as split parts.
+# Auto-reassemble if the parts are present but the exe is not (or is corrupt).
+Write-Step 'Checking split-part reassembly...'
+$pkRestoreScript = Join-Path $RepoRoot 'tools\bin\PK_Community_5.0\Restore-PurpleKnight.ps1'
+if (Test-Path $pkRestoreScript) {
+    & $pkRestoreScript -Dir (Split-Path $pkRestoreScript)
+} else {
+    Write-Warn 'Restore-PurpleKnight.ps1 not found — skipping PurpleKnight reassembly'
+}
+
 # ── 4. Vendored binaries ──────────────────────────────────────────────────────
 Write-Step 'Checking vendored binaries...'
 $binDir = Join-Path $RepoRoot 'tools\bin'

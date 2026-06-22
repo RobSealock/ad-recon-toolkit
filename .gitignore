@@ -3,6 +3,14 @@ tools/bin/
 tools/kev/
 # PS modules are committed directly (small, no build step required)
 
+# PurpleKnight split parts and reassembly script are committed;
+# the reassembled exe itself is excluded (245 MB — over GitHub limit)
+!tools/bin/PK_Community_5.0/PurpleKnight.exe.partaa
+!tools/bin/PK_Community_5.0/PurpleKnight.exe.partab
+!tools/bin/PK_Community_5.0/PurpleKnight.exe.partac
+!tools/bin/PK_Community_5.0/PurpleKnight.exe.partad
+!tools/bin/PK_Community_5.0/Restore-PurpleKnight.ps1
+
 # Raw run artifacts (large zips / XML)
 output/runs/*/artifacts/
 
