@@ -38,6 +38,9 @@
 #   ADC-021   sIDHistory populated on accounts
 #   ADC-022   PASSWD_NOTREQD UAC flag set
 #   ADC-023   Reversible encryption (ENCRYPTED_TEXT_PASSWORD_ALLOWED)
+#
+# Review-Required records (not findings — presence flagged for manual review):
+#   RODC, Exchange, SCCM/MECM, ADFS, Entra Connect, WSUS
 
 # =============================================================================
 # LDAP HELPERS
@@ -752,6 +755,115 @@ function _ADC_CollectPrivGroups {
 # MAIN COLLECTOR
 # =============================================================================
 
+# =============================================================================
+# ADJACENT INFRASTRUCTURE ROLE PRESENCE
+# Lightweight LDAP presence check only — these roles are explicitly out of scope
+# for automated assessment. Emitted as review-required records, not findings,
+# so the post-run pass knows to assess them manually.
+# =============================================================================
+
+function _ADC_CollectRolePresence {
+    param([string]$DomainDn, [string]$ConfigDn)
+
+    $roles = [System.Collections.Generic.List[hashtable]]::new()
+
+    function Add-Role {
+        param([string]$Name, [string]$Category, [string]$Evidence, [string]$Reason)
+        [void]$roles.Add(@{ name=$Name; category=$Category; evidence=$Evidence; reason=$Reason })
+    }
+
+    function LDAP-Exists {
+        param([string]$BaseDn, [string]$Filter, [string[]]$Props)
+        try {
+            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$BaseDn")
+            $s.Filter   = $Filter
+            $s.PageSize = 10
+            $s.SizeLimit= 1
+            if ($Props) { $s.PropertiesToLoad.AddRange($Props) }
+            $r = $s.FindOne()
+            return if ($r) { $r } else { $null }
+        } catch { return $null }
+    }
+
+    # ── RODC (Read-Only Domain Controllers) ──────────────────────────────────
+    # primaryGroupID=521 = the Read-Only Domain Controllers group
+    $rodcResult = LDAP-Exists -BaseDn $DomainDn `
+        -Filter '(&(objectCategory=computer)(primaryGroupID=521))' -Props @('cn','dNSHostName')
+    if ($rodcResult) {
+        $cn = if ($rodcResult.Properties['cn'].Count) { $rodcResult.Properties['cn'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'RODC' -Category 'infrastructure' `
+            -Evidence "First RODC detected: $cn" `
+            -Reason 'RODCs have separate password replication policy and filtered attribute sets that require manual review. Assess: which accounts replicate to the RODC, msDS-RevealedList, and physical security of the RODC location.'
+    }
+
+    # ── Exchange ──────────────────────────────────────────────────────────────
+    # The Exchange organization container lives in the Configuration partition.
+    $exchResult = LDAP-Exists -BaseDn $ConfigDn `
+        -Filter '(objectClass=msExchOrganization)' -Props @('name')
+    if ($exchResult) {
+        $orgName = if ($exchResult.Properties['name'].Count) { $exchResult.Properties['name'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'Exchange' -Category 'infrastructure' `
+            -Evidence "Exchange organization: $orgName" `
+            -Reason 'Exchange extends AD schema and grants elevated AD permissions to EXCHANGE WINDOWS PERMISSIONS and EXCHANGE TRUSTED SUBSYSTEM groups. Assess: these groups'' AD rights, whether Exchange is co-located with AD DS, and Organization Management membership.'
+    }
+
+    # ── SCCM/MECM (SMS_SiteServer SCP) ───────────────────────────────────────
+    $sccmResult = LDAP-Exists -BaseDn $DomainDn `
+        -Filter '(&(objectClass=serviceConnectionPoint)(keywords=SMSVersion*))' `
+        -Props @('cn','bindingInformation')
+    if ($sccmResult) {
+        $cn = if ($sccmResult.Properties['cn'].Count) { $sccmResult.Properties['cn'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'SCCM/MECM' -Category 'infrastructure' `
+            -Evidence "SCCM/MECM SCP detected: $cn" `
+            -Reason 'SCCM/MECM can execute arbitrary code on all managed systems — compromise of the site server is equivalent to domain compromise. Assess: NAA account rights, site server admin group, client push account permissions, and whether PKI enrollment is secured.'
+    }
+
+    # ── ADFS ─────────────────────────────────────────────────────────────────
+    $adfsResult = LDAP-Exists -BaseDn "CN=Program Data,$DomainDn" `
+        -Filter '(&(objectClass=serviceConnectionPoint)(serviceClassName=ADFS*))' `
+        -Props @('cn','serviceBindingInformation')
+    if ($adfsResult) {
+        $cn = if ($adfsResult.Properties['cn'].Count) { $adfsResult.Properties['cn'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'ADFS' -Category 'federation' `
+            -Evidence "ADFS SCP detected: $cn" `
+            -Reason 'ADFS trusts and token-signing certificates are high-value targets. Assess: relying party trust configuration, token-signing key hygiene, primary ADFS server isolation, and whether ADFS Admin console is restricted to Tier 0.'
+    }
+
+    # ── Entra Connect / Azure AD Connect ─────────────────────────────────────
+    # AAD Connect registers a SCP under the Device Registration Configuration container.
+    # Filter on well-known azureADName keyword that ADConnect writes.
+    $entraResult = LDAP-Exists -BaseDn "CN=Services,$ConfigDn" `
+        -Filter '(&(objectClass=serviceConnectionPoint)(keywords=azureADName:*))' `
+        -Props @('cn','keywords')
+    if ($entraResult) {
+        $cn = if ($entraResult.Properties['cn'].Count) { $entraResult.Properties['cn'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'Entra Connect (Azure AD Connect)' -Category 'hybrid-identity' `
+            -Evidence "Entra Connect SCP detected: $cn" `
+            -Reason 'The ADSync service account has privileged AD rights (replication rights or local admin on DC depending on sync mode). Assess: sync account permissions (especially if using AD DS Connector account with DCSync rights), PHS password hash sync, PTA agent, seamless SSO (AZUREADSSOACC account), and whether the sync server is Tier 0.'
+    }
+
+    # ── WSUS ─────────────────────────────────────────────────────────────────
+    # WSUS does not reliably register an SCP, but domain-joined WSUS servers
+    # are typically referenced in GPO registry paths. Check for the WSUS
+    # computer group in AD or the iisadmpwd/wuserver SCP pattern.
+    $wsusResult = LDAP-Exists -BaseDn $DomainDn `
+        -Filter '(&(objectClass=serviceConnectionPoint)(keywords=wuserver*))' `
+        -Props @('cn')
+    if (-not $wsusResult) {
+        # Fallback: look for a computer named *wsus* (heuristic, non-exhaustive)
+        $wsusResult = LDAP-Exists -BaseDn $DomainDn `
+            -Filter '(&(objectCategory=computer)(cn=*wsus*))' -Props @('cn','dNSHostName')
+    }
+    if ($wsusResult) {
+        $cn = if ($wsusResult.Properties['cn'].Count) { $wsusResult.Properties['cn'][0].ToString() } else { '(unknown)' }
+        Add-Role -Name 'WSUS' -Category 'infrastructure' `
+            -Evidence "WSUS presence inferred: $cn" `
+            -Reason 'A compromised WSUS server can deliver malicious updates to all managed Windows systems. Assess: WSUS server accounts, who can approve updates, whether SSL is required, and network isolation of the WSUS server.'
+    }
+
+    return $roles
+}
+
 function _ADCore_Collect {
     param($RunContext, $Settings, $RunRoot)
 
@@ -1192,6 +1304,36 @@ function _ADCore_Collect {
             -Attributes     $uacHygieneData `
             -RunId $runId))
     }
+
+    # ── Sprint 4: Adjacent infrastructure role presence ───────────────────────
+    # Emitted as review-required records — not findings. These roles are out of
+    # scope for automated assessment; the record flags their presence so a
+    # post-run manual review can address them.
+    Write-Host "         [AD-Core] Adjacent infrastructure role detection..."
+    $rolePresence = _ADC_CollectRolePresence -DomainDn $domainDn -ConfigDn $configDn
+    foreach ($role in $rolePresence) {
+        $records.Add((New-ReviewRequired `
+            -Id     "ADCore:role:$($role.name):$domainFQDN" `
+            -Topic  "$($role.name) detected in $($role.category) scope" `
+            -Reason $role.reason `
+            -RunId  $runId))
+    }
+
+    # Emit a role-presence record regardless (so the diff engine and report can
+    # show what roles were seen even when none require review)
+    $records.Add((New-ReconRecord `
+        -Collector      'AD-Core' `
+        -ObjectType     'adjacent-roles' `
+        -StableId       "ADCore:adjacent-roles:$domainFQDN" `
+        -Category       'config' `
+        -Tier           'T0' `
+        -CollectedAtPriv $false `
+        -Attributes     @{
+            domain  = $domainFQDN
+            detected= $rolePresence.ToArray()
+            count   = $rolePresence.Count
+        } `
+        -RunId $runId))
 
     return $records
 }
