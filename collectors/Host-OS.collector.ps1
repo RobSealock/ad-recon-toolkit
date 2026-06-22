@@ -33,6 +33,7 @@
 #   HOST-017  DSRM admin logon behavior not restricted (value >= 1 on DC)
 #   HOST-018  EFS service running on DC (PetitPotam / MS-EFSRPC coercion surface)
 #   HOST-019  DFS Namespace service on DC (DFSCoerce / MS-DFSNM coercion surface)
+#   HOST-020  ESC10 — StrongCertificateBindingEnforcement not at full enforcement on DC
 
 # ── Roles considered unexpected on a Domain Controller ───────────────────────
 $script:_HostOS_UnexpectedDCRoles = @(
@@ -347,6 +348,16 @@ $script:_HostOS_Script = {
         $dfsSvc = Get-Service 'Dfs' -EA SilentlyContinue
         $f.dfsNamespaceRunning = [bool]($dfsSvc -and $dfsSvc.Status -eq 'Running')
 
+        # ESC10: Strong certificate binding enforcement (DC KDC registry key)
+        # 0 = disabled, 1 = compatibility/audit only, 2 = full enforcement (required Feb 2025+)
+        # Absent = pre-patch behavior (treated as 1 — still exploitable by ESC6/9/10)
+        $kdcEnf = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\Kdc' -Name StrongCertificateBindingEnforcement -EA SilentlyContinue).StrongCertificateBindingEnforcement
+        $f.kcbEnforcement = if ($null -eq $kdcEnf) { -1 } else { [int]$kdcEnf }
+
+        # ESC10: Schannel certificate mapping methods (UPN bit 0x4 indicates weak mapping allowed)
+        $schMapping = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\Schannel' -Name CertificateMappingMethods -EA SilentlyContinue).CertificateMappingMethods
+        $f.schannelCertMappingMethods = if ($null -eq $schMapping) { -1 } else { [int]$schMapping }
+
         # Local Administrator account
         $la = Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
         $f.localAdminEnabled        = if ($la) { [bool]$la.Enabled } else { $false }
@@ -577,6 +588,26 @@ function _HostOS_EvaluateFindings {
                 -Technique 'T1187' `
                 -Description "DFS Namespace service (Dfs) is running on DC $host. The MS-DFSNM RPC interface is the coercion vector for DFSCoerce — an authenticated attacker can trigger the DC to authenticate to an arbitrary SMB listener, enabling NTLM relay attacks (to ADCS, another DC, or any service not requiring signing). Recommended: disable DFS Namespace on DCs that are not serving DFS namespaces; enable SMB signing and EPA on all relay targets." `
                 -Reference 'https://attack.mitre.org/techniques/T1187/'))
+        }
+
+        # HOST-020 ESC10 — StrongCertificateBindingEnforcement not at full enforcement
+        # This key gates whether ESC6, ESC9, and ESC10 are exploitable even after patching.
+        # Microsoft moved to full enforcement (value=2) in February 2025. Any DC below
+        # value=2 is still vulnerable to certificate-based privilege escalation attacks.
+        if ($isDC) {
+            $kcb = $sf.kcbEnforcement
+            if ($kcb -lt 2) {
+                $modeDesc = switch ($kcb) {
+                    -1  { 'key absent (pre-patch default — equivalent to compatibility mode)' }
+                    0   { 'disabled (value=0 — no certificate binding enforcement)' }
+                    1   { 'compatibility mode (value=1 — audit only, still exploitable)' }
+                    default { "value=$kcb" }
+                }
+                $findings.Add((New-Finding -Id 'HOST-020' -Severity 'High' `
+                    -Technique 'T1649' `
+                    -Description "StrongCertificateBindingEnforcement on DC $host is $modeDesc. Must be 2 (full enforcement) — Microsoft enforced this by default from February 2025. Below 2, ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC9 (no security extension), and ESC10 (weak UPN certificate mapping) remain exploitable against this DC regardless of template-level mitigations. Registry path: HKLM\SYSTEM\CurrentControlSet\Services\Kdc\StrongCertificateBindingEnforcement. Set to 2 and validate Kerberos auth before removing the override." `
+                    -Reference 'https://attack.mitre.org/techniques/T1649/'))
+            }
         }
     }
 

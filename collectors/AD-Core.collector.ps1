@@ -38,6 +38,7 @@
 #   ADC-021   sIDHistory populated on accounts
 #   ADC-022   PASSWD_NOTREQD UAC flag set
 #   ADC-023   Reversible encryption (ENCRYPTED_TEXT_PASSWORD_ALLOWED)
+#   ADC-024   altSecurityIdentities weak certificate mapping (ESC14)
 #
 # Review-Required records (not findings — presence flagged for manual review):
 #   RODC, Exchange, SCCM/MECM, ADFS, Entra Connect, WSUS
@@ -752,6 +753,60 @@ function _ADC_CollectPrivGroups {
 }
 
 # =============================================================================
+# ESC14 — ALT SECURITY IDENTITIES (weak certificate mapping)
+# Accounts with altSecurityIdentities values using weak binding forms
+# (X509RFC822: email, X509IssuerSubject: issuer+subject) can be targeted by
+# ESC14: an attacker who can obtain or forge a matching certificate can
+# authenticate as that account. Strong forms (X509SKI:, X509PublicKey:,
+# Kerberos:) are acceptable and are NOT flagged.
+# =============================================================================
+
+function _ADC_CollectAltSecurityIdentities {
+    param([string]$DomainDn)
+
+    # Prefixes considered weak — attacker-controlled or forgeable
+    $weakPrefixes = @('X509RFC822:', 'X509IssuerSubject:')
+
+    $results = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(&(|(objectClass=user)(objectClass=computer))(altSecurityIdentities=*))' `
+            -Props @('cn','distinguishedname','altSecurityIdentities','objectClass','userAccountControl')
+        $s.FindAll() | ForEach-Object {
+            $props     = $_.Properties
+            $cn        = if ($props['cn'].Count) { $props['cn'][0].ToString() } else { '?' }
+            $dn        = if ($props['distinguishedname'].Count) { $props['distinguishedname'][0].ToString() } else { '' }
+            $uac       = if ($props['useraccountcontrol'].Count) { [int]$props['useraccountcontrol'][0] } else { 0 }
+            $isEnabled = -not ($uac -band 2)   # ACCOUNTDISABLE bit
+            $isComputer= ($props['objectclass'] | Where-Object { $_ -eq 'computer' }).Count -gt 0
+
+            $weakValues  = [System.Collections.Generic.List[string]]::new()
+            $strongValues= [System.Collections.Generic.List[string]]::new()
+            foreach ($v in $props['altsecurityidentities']) {
+                $vs = $v.ToString()
+                if ($weakPrefixes | Where-Object { $vs.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }) {
+                    [void]$weakValues.Add($vs)
+                } else {
+                    [void]$strongValues.Add($vs)
+                }
+            }
+
+            if ($weakValues.Count -gt 0) {
+                [void]$results.Add(@{
+                    cn          = $cn
+                    dn          = $dn
+                    enabled     = $isEnabled
+                    isComputer  = $isComputer
+                    weakMappings= $weakValues.ToArray()
+                    totalMappings = $props['altsecurityidentities'].Count
+                })
+            }
+        }
+    } catch { Write-Verbose "[AD-Core] altSecurityIdentities query failed: $_" }
+    return $results
+}
+
+# =============================================================================
 # MAIN COLLECTOR
 # =============================================================================
 
@@ -1302,6 +1357,36 @@ function _ADCore_Collect {
             -Tier           'T1' `
             -CollectedAtPriv $false `
             -Attributes     $uacHygieneData `
+            -RunId $runId))
+    }
+
+    # ── ESC14: altSecurityIdentities weak certificate mapping ─────────────────
+    Write-Host "         [AD-Core] Checking altSecurityIdentities (ESC14)..."
+    $altSecIds = _ADC_CollectAltSecurityIdentities -DomainDn $domainDn
+    if ($altSecIds.Count -gt 0) {
+        $enabledWeak = @($altSecIds | Where-Object { $_.enabled })
+        foreach ($a in $enabledWeak) {
+            $forms = $a.weakMappings -join '; '
+            $records.Add((New-Finding `
+                -Id          'ADC-024' `
+                -Severity    'High' `
+                -Technique   'T1649' `
+                -Description "Account '$($a.cn)' ($($a.dn)) has altSecurityIdentities with weak mapping form(s): $forms. Weak forms X509RFC822 (email) and X509IssuerSubject (issuer+subject) are attacker-controllable — a certificate matching these values can be used to authenticate as this account (ESC14). Strong forms (X509SKI, X509PublicKey, Kerberos) are acceptable. Action: convert to strong mapping forms or remove the altSecurityIdentities attribute if unused." `
+                -Reference   'https://attack.mitre.org/techniques/T1649/'))
+        }
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'alt-security-identities' `
+            -StableId       "ADCore:alt-security-identities:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T1' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain          = $domainFQDN
+                totalAffected   = $altSecIds.Count
+                enabledAffected = $enabledWeak.Count
+                accounts        = $altSecIds
+            } `
             -RunId $runId))
     }
 

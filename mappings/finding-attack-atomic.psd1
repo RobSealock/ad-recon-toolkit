@@ -1586,4 +1586,54 @@
         MinPriv        = 'LocalAdmin'
     }
 
+    # ── ESC Coverage Gaps (closed) ──────────────────────────────────────────────
+
+    'HOST-020' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read KDC registry key: (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Kdc -Name StrongCertificateBindingEnforcement -EA SilentlyContinue).StrongCertificateBindingEnforcement — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no KDC configuration modified. Value 2 = full enforcement; 1 = audit only; 0 = disabled; absent = pre-patch compatibility mode.'
+            }
+        )
+        ConfirmationEvents = @(39,40,41)
+        BlastRadius    = 'Registry read on each DC. Setting to 2 (enforcement) may break certificate-based Kerberos auth for accounts with misconfigured altSecurityIdentities — test in audit mode (1) first.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'ADC-024' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'LDAP query for altSecurityIdentities: (New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://DC=...,DC=...")).FindAll() with filter (altSecurityIdentities=*) — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP read — no attribute modified. Validate weak mapping forms (X509RFC822, X509IssuerSubject) against expected certificate issuers before removing.'
+            }
+        )
+        ConfirmationEvents = @(4768,4769,4770)
+        BlastRadius    = 'LDAP read — converting altSecurityIdentities from weak to strong forms (X509SKI, X509PublicKey) requires re-enrollment or re-binding of existing certificates. Plan a migration window.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADCS-009' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'LDAP read msPKI-Template-Schema-Version on certificate templates: (Get-ADObject -LDAPFilter "(objectClass=pKICertificateTemplate)" -SearchBase "CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=..." -Properties msPKI-Template-Schema-Version) — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP read — no template configuration modified. ESC15 (CVE-2024-49019) requires Nov 2024 KB5044280/KB5044284 on issuing CAs; verify patch before relying on schema-upgrade mitigation.'
+            }
+        )
+        ConfirmationEvents = @(4886,4887)
+        BlastRadius    = 'Passive LDAP enumeration — read-only. Migrating from schema-v1 to v2+ templates requires re-publishing the template; test with a non-critical template first. Verify Nov 2024 patch is applied on all issuing CAs.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
 }

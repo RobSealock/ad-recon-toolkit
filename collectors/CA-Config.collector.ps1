@@ -17,7 +17,11 @@
 #   ADCS-005  Certificate template EKU includes Any Purpose or no EKU (ESC2)
 #   ADCS-006  CA has no CRL Distribution Point configured
 #   ADCS-007  Manager approval not required on sensitive template
-#   ADCS-008  Locksmith identified vulnerability (ESC1-ESC16)
+#   ADCS-008  Locksmith / Certipy identified vulnerability (ESC1-ESC16)
+#   ADCS-009  Schema-v1 template with enrollee-supplied subject (ESC15 / CVE-2024-49019)
+#
+# Review-Required records:
+#   CA:esc12:<ca>   HSM key storage for each CA (manual verification required)
 
 # ── EKU OIDs of concern ───────────────────────────────────────────────────────
 $script:_CA_SensitiveEKUs = @{
@@ -316,6 +320,18 @@ function _CA_EvaluateFindings {
                 -Description "Template '$name' with broad enrollment rights does not require manager approval (CT_FLAG_PEND_ALL_REQUESTS not set). Certificates are issued immediately without any human review step." `
                 -Reference 'https://attack.mitre.org/techniques/T1649/'))
         }
+
+        # ADCS-009: ESC15 (CVE-2024-49019) — schema-v1 template with enrollee-supplied subject
+        # Schema version 1 templates do not restrict the EKUs a requestor can embed.
+        # Combined with CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT and broad enrollment rights,
+        # an attacker can request a certificate with any EKU (e.g. Smart Card Logon,
+        # Code Signing) and authenticate as a privileged account. Patched Nov 2024.
+        if ($tmpl.schemaVersion -le 1 -and $allowsSupply -and $broadEnrollAces.Count -gt 0) {
+            $findings.Add((New-Finding -Id 'ADCS-009' -Severity 'Critical' `
+                -Technique 'T1649' `
+                -Description "Template '$name' is vulnerable to ESC15 (CVE-2024-49019): schema version $($tmpl.schemaVersion) with CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT and broad enrollment rights. Schema-v1 templates do not enforce the template EKU list — an enrollee can embed arbitrary EKUs (Smart Card Logon, Client Auth, Code Signing) in the request, enabling authentication as any user. Ensure Nov 2024 patch (KB5044280 / KB5044284 / equivalent) is applied on all CAs issuing this template, then convert to a v2+ template or remove broad enrollment rights." `
+                -Reference 'https://attack.mitre.org/techniques/T1649/'))
+        }
     }
 
     return $findings
@@ -332,7 +348,15 @@ function _CA_RunLocksmith {
         if (-not (Get-Module -ListAvailable -Name Locksmith)) { return $results }
         Write-Host "         [CA-Config] Running Locksmith..."
         $findings = Invoke-Locksmith -Mode 1 -ErrorAction Stop  # Mode 1 = report only
+
+        # Extract ESC IDs from Technique/Name fields for provenance tracking.
+        # Locksmith encodes them as e.g. "ESC1", "ESC3" in the Technique or Name fields.
+        $escIdSet = [System.Collections.Generic.HashSet[string]]::new()
+        $escPattern = [System.Text.RegularExpressions.Regex]::new('ESC\d+', 'IgnoreCase')
+
         foreach ($f in $findings) {
+            $coveredStr = ($f.Technique, $f.Name, $f.Description | Where-Object { $_ }) -join ' '
+            $escIdSet.UnionWith([string[]]($escPattern.Matches($coveredStr) | ForEach-Object { $_.Value.ToUpper() }))
             $results.Add(@{
                 name        = $f.Name
                 technique   = $f.Technique
@@ -341,10 +365,114 @@ function _CA_RunLocksmith {
                 fix         = $f.Fix
             })
         }
+        $results | Add-Member -NotePropertyName 'coveredEscIds' -NotePropertyValue ([string[]]$escIdSet) -ErrorAction SilentlyContinue
+
+        # Attach provenance list to each result for downstream record use
+        $escIdList = [string[]]$escIdSet
+        foreach ($r in $results) { $r['coveredEscId'] = $escIdList }
+
         # Save raw Locksmith output as artifact
         $results | ConvertTo-Json -Depth 10 |
             Out-File (Join-Path $ArtDir 'locksmith-findings.json') -Encoding utf8
     } catch { Write-Warning "[CA-Config] Locksmith failed: $_" }
+    return $results
+}
+
+# =============================================================================
+# CERTIPY INTEGRATION
+# =============================================================================
+
+function _CA_RunCertipy {
+    param([string]$ArtDir, [string]$RunId, [hashtable]$Settings)
+    $results = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        # Locate certipy binary
+        $certipy = $null
+        foreach ($cmd in @('certipy', 'certipy-ad')) {
+            if (Get-Command $cmd -ErrorAction SilentlyContinue) { $certipy = $cmd; break }
+        }
+        if (-not $certipy) {
+            Write-Verbose "[CA-Config] Certipy not found (certipy / certipy-ad); skipping."
+            return $results
+        }
+
+        $outFile = Join-Path $ArtDir 'certipy-output'  # certipy appends _Certipy.json
+        $jsonFile = "$outFile`_Certipy.json"
+
+        # Build auth args — prefer Kerberos if no explicit creds provided
+        $authArgs = [System.Collections.Generic.List[string]]::new()
+        $certUser = $Settings['CertipyUsername']
+        $certPass = $Settings['CertipyPassword']
+        if ($certUser -and $certPass) {
+            $authArgs.AddRange([string[]]@('-u', $certUser, '-p', $certPass))
+        } else {
+            # Kerberos via current session ticket — requires domain-joined host
+            $authArgs.AddRange([string[]]@('-k', '-no-pass'))
+        }
+
+        Write-Host "         [CA-Config] Running Certipy (find -vulnerable)..."
+        $certArgs = ([string[]]$authArgs) + @('find', '-vulnerable', '-json', '-output', $outFile)
+        $output = & $certipy @certArgs 2>&1
+        Write-Verbose "[CA-Config] Certipy output: $output"
+
+        if (-not (Test-Path $jsonFile)) {
+            Write-Warning "[CA-Config] Certipy did not produce output file; check credentials."
+            return $results
+        }
+
+        $raw = Get-Content $jsonFile -Raw | ConvertFrom-Json -ErrorAction Stop
+
+        # Certipy JSON: top-level keys are CA names, each with nested template/CA findings
+        # Vulnerable entries have a '[!] Vulnerabilities' section in their Remarks/Vulnerabilities key
+        $escIdSet = [System.Collections.Generic.HashSet[string]]::new()
+        $escPattern = [System.Text.RegularExpressions.Regex]::new('ESC\d+', 'IgnoreCase')
+
+        $extractFindings = {
+            param($node, [string]$context)
+            $nodeFindings = [System.Collections.Generic.List[hashtable]]::new()
+            if ($null -eq $node) { return $nodeFindings }
+            $vulnProp = $node.PSObject.Properties | Where-Object { $_.Name -match 'Vulnerabilit' } | Select-Object -First 1
+            if ($vulnProp -and $vulnProp.Value) {
+                $vulnText = $vulnProp.Value | Out-String
+                $escIds = $escPattern.Matches($vulnText) | ForEach-Object { $_.Value.ToUpper() }
+                foreach ($id in $escIds) { [void]$escIdSet.Add($id) }
+                $nodeFindings.Add(@{
+                    context        = $context
+                    vulnerabilities= $vulnText.Trim()
+                    escIds         = [string[]]$escIds
+                })
+            }
+            return $nodeFindings
+        }
+
+        # Walk top-level CAs and nested Templates
+        foreach ($caName in ($raw.PSObject.Properties | Select-Object -ExpandProperty Name)) {
+            $caNode = $raw.$caName
+            $caFindings = & $extractFindings $caNode "[CA] $caName"
+            $caFindings | ForEach-Object { [void]$results.Add($_) }
+            $templatesNode = $caNode.PSObject.Properties | Where-Object { $_.Name -eq 'Certificate Templates' } | Select-Object -First 1
+            if ($templatesNode) {
+                foreach ($tName in ($templatesNode.Value.PSObject.Properties | Select-Object -ExpandProperty Name)) {
+                    $tFindings = & $extractFindings $templatesNode.Value.$tName "[Template] $tName"
+                    $tFindings | ForEach-Object { [void]$results.Add($_) }
+                }
+            }
+        }
+
+        foreach ($r in $results) { $r['source'] = 'certipy' }
+        $coveredEscIds = [string[]]$escIdSet
+
+        # Persist artifact
+        @{
+            tool         = 'certipy'
+            version      = (& $certipy --version 2>&1 | Select-Object -First 1)
+            coveredEscIds= $coveredEscIds
+            findings     = $results.ToArray()
+        } | ConvertTo-Json -Depth 10 |
+            Out-File (Join-Path $ArtDir 'certipy-findings.json') -Encoding utf8
+
+        Write-Host "         [CA-Config] Certipy: $($results.Count) vulnerable item(s); ESC IDs: $($coveredEscIds -join ', ')"
+    } catch { Write-Warning "[CA-Config] Certipy failed: $_" }
     return $results
 }
 
@@ -383,6 +511,9 @@ function _CAConfig_Collect {
     $lsEnabled = ($Settings['EnableLocksmith'] -ne $false)
     $locksmithFindings = if ($lsEnabled) { _CA_RunLocksmith -ArtDir $artDir -RunId $runId } else { @() }
 
+    # Derive Locksmith-covered ESC IDs for provenance record
+    $lsEscIdSet = [System.Collections.Generic.HashSet[string]]::new()
+    $escPattern  = [System.Text.RegularExpressions.Regex]::new('ESC\d+', 'IgnoreCase')
     foreach ($lf in $locksmithFindings) {
         $sev = switch -Regex ($lf.severity) {
             'Critical' { 'Critical' } 'High' { 'High' } 'Medium' { 'Medium' } default { 'Low' }
@@ -391,6 +522,36 @@ function _CAConfig_Collect {
             -Technique 'T1649' `
             -Description "[Locksmith] $($lf.name): $($lf.description)" `
             -Reference 'https://attack.mitre.org/techniques/T1649/'))
+        $coveredStr = ($lf.technique, $lf.name, $lf.description | Where-Object { $_ }) -join ' '
+        $lsEscIdSet.UnionWith([string[]]($escPattern.Matches($coveredStr) | ForEach-Object { $_.Value.ToUpper() }))
+    }
+    $locksmithCoveredEscIds = [string[]]$lsEscIdSet
+
+    # Certipy integration (optional — requires certipy/certipy-ad binary + credentials)
+    $certipyEnabled = ($Settings['EnableCertipy'] -eq $true)
+    $certipyFindings = if ($certipyEnabled) { _CA_RunCertipy -ArtDir $artDir -RunId $runId -Settings $Settings } else { @() }
+
+    # Certipy findings emit directly as ADCS-008 with [Certipy] prefix so they're
+    # distinguishable from Locksmith entries while sharing the same finding ID namespace.
+    $certipyEscIdSet = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($cf in $certipyFindings) {
+        if ($cf.escIds) { $certipyEscIdSet.UnionWith([string[]]$cf.escIds) }
+        $findings.Add((New-Finding -Id 'ADCS-008' -Severity 'High' `
+            -Technique 'T1649' `
+            -Description "[Certipy] $($cf.context): $($cf.vulnerabilities)" `
+            -Reference 'https://attack.mitre.org/techniques/T1649/'))
+    }
+    $certipyCoveredEscIds = [string[]]$certipyEscIdSet
+
+    # ESC12 — HSM-protected CA key storage requires manual verification.
+    # There is no reliable remote way to confirm HSM enrollment; emit review-required
+    # per CA so the post-run pass knows to inspect each CA's key storage provider.
+    foreach ($ca in $cas) {
+        $records.Add((New-ReviewRequired `
+            -Id     "CA:esc12:$($ca.cn):$domainFQDN" `
+            -Topic  "ESC12 — CA '$($ca.cn)' key storage provider (HSM/software)" `
+            -Reason "ESC12 requires confirming that this CA's private key is protected by a Hardware Security Module (HSM). If the key resides in a software KSP, an attacker with CA admin rights can extract it and forge certificates for any identity. Verify via certsrv or certutil -getreg CA\CSP\ProviderName on the CA server." `
+            -RunId  $runId))
     }
 
     # ── Emit records ──────────────────────────────────────────────────────────
@@ -417,6 +578,9 @@ function _CAConfig_Collect {
             publishedTemplateNames = $publishedNames
             totalTemplates         = $templates.Count
             locksmithFindingCount  = $locksmithFindings.Count
+            locksmithCoveredEscIds = $locksmithCoveredEscIds
+            certipyFindingCount    = $certipyFindings.Count
+            certipyCoveredEscIds   = $certipyCoveredEscIds
         } `
         -Findings       $findings.ToArray() `
         -RunId          $runId))
@@ -458,11 +622,31 @@ function _CAConfig_Collect {
             -Tier           'T0' `
             -CollectedAtPriv $false `
             -Attributes     @{
-                domain   = $domainFQDN
-                count    = $locksmithFindings.Count
-                findings = $locksmithFindings.ToArray()
+                domain          = $domainFQDN
+                count           = $locksmithFindings.Count
+                coveredEscIds   = $locksmithCoveredEscIds
+                findings        = $locksmithFindings.ToArray()
             } `
             -RawArtifactRef 'locksmith-findings.json' `
+            -RunId $runId))
+    }
+
+    # Certipy raw findings record
+    if ($certipyFindings.Count -gt 0) {
+        $records.Add((New-ReconRecord `
+            -Collector      'CA-Config' `
+            -ObjectType     'certipy-findings' `
+            -StableId       "CA:certipy:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T0' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain          = $domainFQDN
+                count           = $certipyFindings.Count
+                coveredEscIds   = $certipyCoveredEscIds
+                findings        = $certipyFindings.ToArray()
+            } `
+            -RawArtifactRef 'certipy-findings.json' `
             -RunId $runId))
     }
 
@@ -471,6 +655,6 @@ function _CAConfig_Collect {
 
 Register-Collector `
     -Name        'CA-Config' `
-    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC8 evaluation), Locksmith integration' `
+    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC9/ESC15 native evaluation), Locksmith2 integration (ESC1-ESC16 + provenance), Certipy integration (optional, ESC1-ESC16 primary enumerator), ESC12 review-required per CA' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _CAConfig_Collect @PSBoundParameters }
