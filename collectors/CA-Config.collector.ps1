@@ -411,8 +411,10 @@ function _CA_RunCertipy {
         # Explicit credentials are required on Windows; -k -no-pass is only used on Linux.
         $certUser = $Settings['CertipyUsername']
         $certPass = $Settings['CertipyPassword']
-        $isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-            [System.Runtime.InteropServices.OSPlatform]::Windows)
+        # PSEdition 'Desktop' = Windows PowerShell 5.1 (Windows-only by definition).
+        # PSEdition 'Core' = PS6+ where $IsWindows is a built-in automatic variable.
+        # Avoids RuntimeInformation which requires .NET 4.7.1+ (not on all Server SKUs).
+        $isWindows = if ($PSVersionTable.PSEdition -eq 'Desktop') { $true } else { $IsWindows }
 
         $authArgs = [System.Collections.Generic.List[string]]::new()
         if ($certUser -and $certPass) {

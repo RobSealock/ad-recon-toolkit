@@ -182,7 +182,8 @@ if ($pipPackages.Count -gt 0) {
 
                 # Locate the installed exe in Python's Scripts directories
                 $candidates = @()
-                $pyCmd = (Get-Command 'python' -ErrorAction SilentlyContinue)?.Source
+                $pyObj = Get-Command 'python' -ErrorAction SilentlyContinue
+                $pyCmd = if ($pyObj) { $pyObj.Source } else { $null }
                 if ($pyCmd) {
                     $pyDir = Split-Path $pyCmd
                     $candidates += Join-Path $pyDir "Scripts\$($pkg.ExeName)"
