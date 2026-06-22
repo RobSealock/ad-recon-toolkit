@@ -226,9 +226,18 @@ if ($pipPackages.Count -gt 0) {
 }
 
 # ── 3c. Split-part reassembly ─────────────────────────────────────────────────
-# PurpleKnight.exe exceeds GitHub's 100 MB limit and is stored as split parts.
-# Auto-reassemble if the parts are present but the exe is not (or is corrupt).
+# PingCastle.exe, PingCastleAutoUpdater.exe, and PurpleKnight.exe all exceed
+# GitHub's 100 MB per-file limit and are stored as split parts or zipped.
+# Auto-reassemble on first bootstrap run.
 Write-Step 'Checking split-part reassembly...'
+
+$pcRestoreScript = Join-Path $RepoRoot 'tools\bin\Restore-PingCastle.ps1'
+if (Test-Path $pcRestoreScript) {
+    & $pcRestoreScript -Dir (Join-Path $RepoRoot 'tools\bin')
+} else {
+    Write-Warn 'Restore-PingCastle.ps1 not found — skipping PingCastle reassembly'
+}
+
 $pkRestoreScript = Join-Path $RepoRoot 'tools\bin\PK_Community_5.0\Restore-PurpleKnight.ps1'
 if (Test-Path $pkRestoreScript) {
     & $pkRestoreScript -Dir (Split-Path $pkRestoreScript)

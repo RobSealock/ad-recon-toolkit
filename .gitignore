@@ -3,13 +3,29 @@ tools/bin/
 tools/kev/
 # PS modules are committed directly (small, no build step required)
 
-# PurpleKnight split parts and reassembly script are committed;
-# the reassembled exe itself is excluded (245 MB — over GitHub limit)
-!tools/bin/PK_Community_5.0/PurpleKnight.exe.partaa
-!tools/bin/PK_Community_5.0/PurpleKnight.exe.partab
-!tools/bin/PK_Community_5.0/PurpleKnight.exe.partac
-!tools/bin/PK_Community_5.0/PurpleKnight.exe.partad
-!tools/bin/PK_Community_5.0/Restore-PurpleKnight.ps1
+# Oversized executables — excluded (exceed GitHub 100 MB limit); restored at runtime
+# by Restore-PingCastle.ps1 and Restore-PurpleKnight.ps1 via Install-Prereqs.ps1
+# Everything else in tools/bin is committed directly.
+!tools/bin/Active_Directory_Security_Self_Assessment_v1.4.pdf
+!tools/bin/appsettings.console.json
+!tools/bin/certipy
+!tools/bin/Group3r.exe
+!tools/bin/license.rtf
+!tools/bin/Restore-PingCastle.ps1
+!tools/bin/SharpHound.exe
+!tools/bin/SharpHound.exe.config
+!tools/bin/SharpHound.pdb
+!tools/bin/SharpHound.ps1
+!tools/bin/PingCastle.exe.zip.partaa
+!tools/bin/PingCastle.exe.zip.partab
+!tools/bin/PingCastleAutoUpdater.exe.zip
+!tools/bin/PK_Community_5.0/
+!tools/bin/PK_Community_5.0/**
+# Re-exclude the oversized assembled executables (restored at runtime, not committed)
+tools/bin/PingCastle.exe
+tools/bin/PingCastleAutoUpdater.exe
+tools/bin/PingCastle.exe.zip
+tools/bin/PK_Community_5.0/PurpleKnight.exe
 
 # Raw run artifacts (large zips / XML)
 output/runs/*/artifacts/
