@@ -1312,4 +1312,214 @@
         MinPriv        = 'AnyAuthUser'
     }
 
+    # ── Audit Policy findings ────────────────────────────────────────────────
+
+    'AUD-001' = @{
+        Techniques     = @('T1562.002')
+        TechniqueNames = @('Impair Defenses: Disable Windows Event Logging')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Verify 5136 (Directory Service Changes) fires on test OU rename — read: auditpol /get /subcategory:"Directory Service Changes"'
+                Destructive = $false
+                Rollback    = 'Read-only auditpol query — no policy change'
+            }
+        )
+        ConfirmationEvents = @(5136,5137,5138)
+        BlastRadius    = 'Audit policy read — no event log or policy modification'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-002' = @{
+        Techniques     = @('T1003.006')
+        TechniqueNames = @('OS Credential Dumping: DCSync')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Verify 4662 fires via auditpol /get /subcategory:"Directory Service Access" — read-only'
+                Destructive = $false
+                Rollback    = 'Read-only auditpol query — no policy change'
+            }
+        )
+        ConfirmationEvents = @(4662)
+        BlastRadius    = 'Audit policy read — confirm SACL also required on domain NC head object'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-003' = @{
+        Techniques     = @('T1059')
+        TechniqueNames = @('Command and Scripting Interpreter')
+        AtomicTests    = @(
+            @{
+                Guid        = '4f5e19a5-4c38-4bc0-9dce-a65c1d25e5fd'
+                Name        = 'Audit process creation — read: auditpol /get /subcategory:"Process Creation" (non-destructive query)'
+                Destructive = $false
+                Rollback    = 'Read-only — no process spawned, no policy modified'
+            }
+        )
+        ConfirmationEvents = @(4688)
+        BlastRadius    = 'Audit policy read only — confirm EDR provides compensating control before enabling'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-004' = @{
+        Techniques     = @('T1059')
+        TechniqueNames = @('Command and Scripting Interpreter')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check ProcessCreationIncludeCmdLine_Enabled registry key: Get-ItemProperty HKLM:\...\Policies\System\Audit'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified'
+            }
+        )
+        ConfirmationEvents = @(4688)
+        BlastRadius    = 'Registry read — command-line included in 4688 when both subcategory and this key are enabled'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-005' = @{
+        Techniques     = @('T1098')
+        TechniqueNames = @('Account Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Verify 4728/4732/4756 fire: auditpol /get /subcategory:"Security Group Management" — read-only'
+                Destructive = $false
+                Rollback    = 'Audit policy read — no group membership change'
+            }
+        )
+        ConfirmationEvents = @(4728,4732,4756)
+        BlastRadius    = 'Read-only audit policy query'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-006' = @{
+        Techniques     = @('T1136.001')
+        TechniqueNames = @('Create Account: Local Account')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Verify 4720/4738 fire: auditpol /get /subcategory:"User Account Management" — read-only'
+                Destructive = $false
+                Rollback    = 'Audit policy read — no account created or modified'
+            }
+        )
+        ConfirmationEvents = @(4720,4722,4726,4738)
+        BlastRadius    = 'Read-only audit policy query'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-007' = @{
+        Techniques     = @('T1558')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Verify Kerberos events: auditpol /get /subcategory:"Kerberos Authentication Service","Kerberos Service Ticket Operations" — read-only'
+                Destructive = $false
+                Rollback    = 'Audit policy read — no Kerberos request made'
+            }
+        )
+        ConfirmationEvents = @(4768,4769,4771)
+        BlastRadius    = 'Read-only audit policy query — 4768/4771 required for AS-REP/brute-force detection; 4769 for Kerberoast detection'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-008' = @{
+        Techniques     = @('T1134')
+        TechniqueNames = @('Access Token Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check: auditpol /get /subcategory:"Sensitive Privilege Use" — read-only query'
+                Destructive = $false
+                Rollback    = 'Read-only — no privilege exercised'
+            }
+        )
+        ConfirmationEvents = @(4673,4674)
+        BlastRadius    = 'Read-only audit policy query'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-009' = @{
+        Techniques     = @('T1562.002')
+        TechniqueNames = @('Impair Defenses: Disable Windows Event Logging')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check: auditpol /get /subcategory:"Audit Policy Change" — read-only query; 4719 should appear after any auditpol change'
+                Destructive = $false
+                Rollback    = 'Read-only — no policy modified'
+            }
+        )
+        ConfirmationEvents = @(4719)
+        BlastRadius    = 'Read-only audit policy query — 4719 fires on any auditpol /set operation'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-010' = @{
+        Techniques     = @('T1059.001')
+        TechniqueNames = @('Command and Scripting Interpreter: PowerShell')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check ScriptBlock logging: Get-ItemProperty HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — confirms Event 4104 generation in Microsoft-Windows-PowerShell/Operational'
+            }
+        )
+        ConfirmationEvents = @(4103,4104)
+        BlastRadius    = 'Registry read — 4104 events contain full script content; ensure log size is adequate before enabling'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-011' = @{
+        Techniques     = @('T1562.002')
+        TechniqueNames = @('Impair Defenses: Disable Windows Event Logging')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check Security log size: (Get-WinEvent -ListLog Security).MaximumSizeInBytes — read-only'
+                Destructive = $false
+                Rollback    = 'Read-only — no log configuration modified'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Read-only log metadata query — CIS minimum 196608 KB (192 MB); recommend 524288 KB (512 MB) for high-volume DCs'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-012' = @{
+        Techniques     = @('T1562.006')
+        TechniqueNames = @('Impair Defenses: Indicator Blocking')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check Sysmon service and config: Get-Service Sysmon64; Get-Item HKLM:\SYSTEM\...\SysmonDrv\Parameters — read-only'
+                Destructive = $false
+                Rollback    = 'Service and registry read — no Sysmon configuration changed'
+            }
+        )
+        ConfirmationEvents = @(1,2,3,7,8,10,11,12,13,14,15,17,18,22,25,26)
+        BlastRadius    = 'Read-only check — confirm config loaded before assuming coverage'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'AUD-013' = @{
+        Techniques     = @('T1069.002')
+        TechniqueNames = @('Permission Groups Discovery: Domain Groups')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check NTDS diagnostics: Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics "15 Field Engineering" — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — 1644 events appear in Directory Service log at level 5; tune threshold via "Expensive Search Results Threshold" key'
+            }
+        )
+        ConfirmationEvents = @(1644)
+        BlastRadius    = 'Registry read — 1644 logging can be noisy; tune threshold before enabling in production'
+        MinPriv        = 'LocalAdmin'
+    }
+
 }
