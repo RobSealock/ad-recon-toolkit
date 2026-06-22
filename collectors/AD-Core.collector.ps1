@@ -29,6 +29,15 @@
 #   ADC-012   Recycling Bin not enabled (irrecoverable AD deletions)
 #   ADC-013   DES encryption enabled on user account
 #   ADC-014   RBCD configured on sensitive objects
+#   ADC-015   Constrained delegation (S4U2Self/protocol-transition flag)
+#   ADC-016   Shadow credentials (msDS-KeyCredentialLink populated)
+#   ADC-017   Secrets found in description/info/comment attributes
+#   ADC-018   gMSA retrieval rights over-broad
+#   ADC-019   AdminSDHolder non-Tier-0 control ACEs (SDProp persistence)
+#   ADC-020   LAPS read rights granted to non-Tier-0 principals
+#   ADC-021   sIDHistory populated on accounts
+#   ADC-022   PASSWD_NOTREQD UAC flag set
+#   ADC-023   Reversible encryption (ENCRYPTED_TEXT_PASSWORD_ALLOWED)
 
 # =============================================================================
 # LDAP HELPERS
@@ -200,15 +209,18 @@ function _ADC_EnumerateAccounts {
     param([string]$DomainDn)
 
     $result = @{
-        asrepRoastable  = [System.Collections.Generic.List[string]]::new()
-        kerberoastable  = [System.Collections.Generic.List[hashtable]]::new()
-        desOnly         = [System.Collections.Generic.List[string]]::new()
+        asrepRoastable          = [System.Collections.Generic.List[string]]::new()
+        kerberoastable          = [System.Collections.Generic.List[hashtable]]::new()
+        desOnly                 = [System.Collections.Generic.List[string]]::new()
+        passwdNotRequired       = [System.Collections.Generic.List[string]]::new()
+        reversibleEncryption    = [System.Collections.Generic.List[string]]::new()
         unconstrainedDelegation = [System.Collections.Generic.List[hashtable]]::new()
-        rbcd            = [System.Collections.Generic.List[hashtable]]::new()
-        adminSdHolder   = [System.Collections.Generic.List[string]]::new()
-        totalUsers      = 0
-        enabledUsers    = 0
-        staleUsers      = 0  # no logon in 90+ days
+        rbcd                    = [System.Collections.Generic.List[hashtable]]::new()
+        adminSdHolder           = [System.Collections.Generic.List[string]]::new()
+        sidHistoryAccounts      = [System.Collections.Generic.List[hashtable]]::new()
+        totalUsers              = 0
+        enabledUsers            = 0
+        staleUsers              = 0  # no logon in 90+ days
     }
 
     try {
@@ -222,6 +234,9 @@ function _ADC_EnumerateAccounts {
         $UAC_SERVER_TRUST_ACCOUNT       = 0x2000
 
         $staleThreshold = (Get-Date).AddDays(-90).ToFileTime()
+
+        $UAC_PASSWD_NOTREQD              = 0x0020
+        $UAC_ENCRYPTED_TEXT_PASSWORD     = 0x0080  # Reversible encryption
 
         # One broad pass over enabled user accounts
         $s = _ADC_Searcher -BaseDn $DomainDn `
@@ -241,9 +256,7 @@ function _ADC_EnumerateAccounts {
             }
 
             # AS-REP roastable
-            if ($uac -band $UAC_DONT_REQ_PREAUTH) {
-                [void]$result.asrepRoastable.Add($sam)
-            }
+            if ($uac -band $UAC_DONT_REQ_PREAUTH) { [void]$result.asrepRoastable.Add($sam) }
 
             # Kerberoastable (has SPN, not a computer, not gMSA)
             if ($p['serviceprincipalname'].Count) {
@@ -254,9 +267,29 @@ function _ADC_EnumerateAccounts {
             # DES-only
             if ($uac -band $UAC_USE_DES_KEY_ONLY) { [void]$result.desOnly.Add($sam) }
 
+            # Password not required
+            if ($uac -band $UAC_PASSWD_NOTREQD) { [void]$result.passwdNotRequired.Add($sam) }
+
+            # Reversible encryption (plaintext-equivalent storage)
+            if ($uac -band $UAC_ENCRYPTED_TEXT_PASSWORD) { [void]$result.reversibleEncryption.Add($sam) }
+
             # AdminSDHolder-protected
             if (_ADC_IntProp $p 'admincount' -gt 0) { [void]$result.adminSdHolder.Add($sam) }
         }
+
+        # sIDHistory — accounts with legacy SID history (can grant silent privilege via trust)
+        try {
+            $ss = _ADC_Searcher -BaseDn $DomainDn -Filter '(sIDHistory=*)' `
+                -Props @('samaccountname','objectclass','sIDHistory')
+            $ss.FindAll() | ForEach-Object {
+                $p = $_.Properties
+                [void]$result.sidHistoryAccounts.Add(@{
+                    samAccount  = _ADC_StrProp $p 'samaccountname'
+                    objectClass = if ($p['objectclass'].Count) { $p['objectclass'][-1].ToString() } else { '' }
+                    sidCount    = $p['sidhistory'].Count
+                })
+            }
+        } catch { Write-Verbose "[AD-Core] sIDHistory query failed: $_" }
 
         # Unconstrained delegation — computers (non-DCs)
         $su = _ADC_Searcher -BaseDn $DomainDn `
@@ -332,23 +365,40 @@ function _ADC_CollectKerberos {
 
 function _ADC_CollectDCSyncRights {
     param([string]$DomainDn)
-    $holders = [System.Collections.Generic.List[string]]::new()
+    $holders = [System.Collections.Generic.List[hashtable]]::new()
     try {
-        # DCSync requires both "Replicating Directory Changes" and "Replicating Directory Changes All"
-        # Extended right GUIDs:
-        $RDC_ALL_GUID  = '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'  # Replicating Directory Changes All
-        $RDC_GUID      = '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'  # Replicating Directory Changes
+        # All three replication extended-right GUIDs (locale-independent)
+        $REPL_CHANGES_GUID          = '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'  # DS-Replication-Get-Changes
+        $REPL_CHANGES_ALL_GUID      = '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'  # DS-Replication-Get-Changes-All
+        $REPL_CHANGES_FILTERED_GUID = '1131f6a2-9c07-11d1-f79f-00c04fc2dcd2'  # DS-Replication-Get-Changes-In-Filtered-Set
+        $replGuids = @($REPL_CHANGES_GUID, $REPL_CHANGES_ALL_GUID, $REPL_CHANGES_FILTERED_GUID)
 
-        $dom  = [adsi]"LDAP://$DomainDn"
-        $sd   = $dom.psbase.ObjectSecurity
-        $rules= $sd.Access | Where-Object { $_.ActiveDirectoryRights -match 'ExtendedRight' }
+        # Well-known SIDs that legitimately hold replication rights (SID-based, not name-based)
+        $domSid    = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $safeREs   = @(
+            '^S-1-5-32-544$'                              # BUILTIN\Administrators
+            '^S-1-5-18$'                                  # SYSTEM
+            "^$([regex]::Escape($domSid))-516$"           # Domain Controllers
+            "^$([regex]::Escape($domSid))-498$"           # Enterprise Read-Only DCs
+            '^S-1-5-9$'                                   # Enterprise Domain Controllers
+        )
+
+        $dom   = [adsi]"LDAP://$DomainDn"
+        $sd    = $dom.psbase.ObjectSecurity
+        $rules = $sd.Access | Where-Object { $_.ActiveDirectoryRights -match 'ExtendedRight' -and $_.AccessControlType -eq 'Allow' }
         foreach ($rule in $rules) {
-            if ($rule.ObjectType -eq $RDC_ALL_GUID -or $rule.ObjectType -eq $RDC_GUID) {
-                $id = try { $rule.IdentityReference.ToString() } catch { 'unknown' }
-                # Exclude well-known replication accounts
-                if ($id -notmatch '(?i)(Domain Controllers|Enterprise Domain Controllers|ENTERPRISE DOMAIN CONTROLLERS|Administrators|NT AUTHORITY)') {
-                    [void]$holders.Add($id)
+            if ($replGuids -notcontains $rule.ObjectType.ToString()) { continue }
+            $sid  = try { $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $rule.IdentityReference.ToString() }
+            $name = try { $rule.IdentityReference.ToString() } catch { $sid }
+            $isSafe = $safeREs | Where-Object { $sid -match $_ }
+            if (-not $isSafe) {
+                $right = switch ($rule.ObjectType.ToString()) {
+                    $REPL_CHANGES_GUID          { 'DS-Replication-Get-Changes' }
+                    $REPL_CHANGES_ALL_GUID      { 'DS-Replication-Get-Changes-All' }
+                    $REPL_CHANGES_FILTERED_GUID { 'DS-Replication-Get-Changes-In-Filtered-Set' }
+                    default                     { $rule.ObjectType.ToString() }
                 }
+                [void]$holders.Add(@{ sid=$sid; name=$name; right=$right })
             }
         }
     } catch { Write-Warning "[AD-Core] DCSync ACL read failed: $_" }
@@ -373,6 +423,295 @@ function _ADC_CollectPasswordPolicy {
             lockoutDuration      = _ADC_IntProp $p 'lockoutDuration'
         }
     } catch { return @{ minPasswordLength=0; error='collection-failed' } }
+}
+
+# =============================================================================
+# CONSTRAINED DELEGATION
+# =============================================================================
+
+function _ADC_CollectConstrainedDelegation {
+    param([string]$DomainDn)
+    $result = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        # Any object (user or computer) with msDS-AllowedToDelegateTo set
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(msDS-AllowedToDelegateTo=*)' `
+            -Props @('cn','samaccountname','objectclass','useraccountcontrol','msDS-AllowedToDelegateTo')
+        $s.FindAll() | ForEach-Object {
+            $p   = $_.Properties
+            $uac = _ADC_IntProp $p 'useraccountcontrol'
+            # TrustedToAuthForDelegation (0x1000000) means protocol transition (S4U2Self) is enabled
+            $protoTransition = ($uac -band 0x1000000) -ne 0
+            $spns = @($p['msds-allowedtodelegateto'] | ForEach-Object { $_.ToString() })
+            [void]$result.Add(@{
+                cn                = _ADC_StrProp $p 'cn'
+                samAccount        = _ADC_StrProp $p 'samaccountname'
+                objectClass       = if ($p['objectclass'].Count) { $p['objectclass'][-1].ToString() } else { '' }
+                protocolTransition= $protoTransition
+                allowedTo         = $spns
+            })
+        }
+    } catch { Write-Verbose "[AD-Core] Constrained delegation query failed: $_" }
+    return $result
+}
+
+# =============================================================================
+# SHADOW CREDENTIALS
+# =============================================================================
+
+function _ADC_CollectShadowCredentials {
+    param([string]$DomainDn)
+    $result = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(msDS-KeyCredentialLink=*)' `
+            -Props @('cn','samaccountname','objectclass','msDS-KeyCredentialLink')
+        $s.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            [void]$result.Add(@{
+                cn           = _ADC_StrProp $p 'cn'
+                samAccount   = _ADC_StrProp $p 'samaccountname'
+                objectClass  = if ($p['objectclass'].Count) { $p['objectclass'][-1].ToString() } else { '' }
+                keyCount     = $p['msds-keycredentiallink'].Count
+            })
+        }
+    } catch { Write-Verbose "[AD-Core] Shadow credentials query failed: $_" }
+    return $result
+}
+
+# =============================================================================
+# SECRETS IN AD ATTRIBUTES
+# =============================================================================
+
+$script:_ADC_SecretPatterns = @(
+    '(?i)(password|passwd|pwd)\s*[:=]\s*\S+'
+    '(?i)p@ss'
+    '(?i)pass\s*(?:word|wd)?\s*(?:is|:)\s*\S+'
+    '(?i)cred(?:ential)?\s*[:=]\s*\S+'
+)
+
+function _ADC_CollectSecretsInAttributes {
+    param([string]$DomainDn)
+    $hits = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))' `
+            -Props @('samaccountname','description','info','comment')
+        $s.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            $sam = _ADC_StrProp $p 'samaccountname'
+            foreach ($attr in @('description','info','comment')) {
+                if (-not $p[$attr].Count) { continue }
+                $val = $p[$attr][0].ToString()
+                foreach ($pat in $script:_ADC_SecretPatterns) {
+                    if ($val -match $pat) {
+                        [void]$hits.Add(@{
+                            samAccount = $sam
+                            attribute  = $attr
+                            # Truncate value — we record that a secret is present, not the secret itself
+                            preview    = $val.Substring(0,[Math]::Min(60,$val.Length)) + '...'
+                        })
+                        break  # one hit per attribute per account is enough
+                    }
+                }
+            }
+        }
+        # Also check computer objects
+        $sc = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(objectCategory=computer)' `
+            -Props @('cn','description','comment')
+        $sc.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            $cn = _ADC_StrProp $p 'cn'
+            foreach ($attr in @('description','comment')) {
+                if (-not $p[$attr].Count) { continue }
+                $val = $p[$attr][0].ToString()
+                foreach ($pat in $script:_ADC_SecretPatterns) {
+                    if ($val -match $pat) {
+                        [void]$hits.Add(@{
+                            samAccount = $cn
+                            attribute  = $attr
+                            objectClass= 'computer'
+                            preview    = $val.Substring(0,[Math]::Min(60,$val.Length)) + '...'
+                        })
+                        break
+                    }
+                }
+            }
+        }
+    } catch { Write-Verbose "[AD-Core] Secrets-in-attributes scan failed: $_" }
+    return $hits
+}
+
+# =============================================================================
+# gMSA RETRIEVAL RIGHTS
+# =============================================================================
+
+function _ADC_CollectGMSARights {
+    param([string]$DomainDn)
+    $result = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(objectClass=msDS-GroupManagedServiceAccount)' `
+            -Props @('cn','samaccountname','msDS-GroupMSAMembership','msDS-ManagedPasswordInterval')
+        $s.FindAll() | ForEach-Object {
+            $p  = $_.Properties
+            $cn = _ADC_StrProp $p 'cn'
+            $principals = [System.Collections.Generic.List[string]]::new()
+            if ($p['msds-groupmsamembership'].Count) {
+                # Parse the security descriptor to extract allowed principals
+                try {
+                    $sdBytes = [byte[]]$p['msds-groupmsamembership'][0]
+                    $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($sdBytes, 0)
+                    foreach ($ace in $sd.DiscretionaryAcl) {
+                        $name = try { $ace.SecurityIdentifier.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.SecurityIdentifier.ToString() }
+                        [void]$principals.Add($name)
+                    }
+                } catch {}
+            }
+            [void]$result.Add(@{
+                cn                    = $cn
+                samAccount            = _ADC_StrProp $p 'samaccountname'
+                passwordIntervalDays  = _ADC_IntProp $p 'msds-managedpasswordinterval'
+                allowedPrincipals     = $principals.ToArray()
+                allowedCount          = $principals.Count
+            })
+        }
+    } catch { Write-Verbose "[AD-Core] gMSA rights query failed: $_" }
+    return $result
+}
+
+# =============================================================================
+# ADMINSDHOLDER DACL SNAPSHOT
+# Snapshot approach: emit full DACL as config record so drift engine catches
+# planted ACEs across runs. Heuristically flag non-Tier-0 control rights.
+# =============================================================================
+
+function _ADC_CollectAdminSDHolderDACL {
+    param([string]$DomainDn)
+    $result = @{ dn=''; aces=@(); controlRightFlags=@() }
+    try {
+        $sdholderDn = "CN=AdminSDHolder,CN=System,$DomainDn"
+        $sdh = [adsi]"LDAP://$sdholderDn"
+        $sd  = $sdh.psbase.ObjectSecurity
+        $result.dn = $sdholderDn
+
+        # Well-known Tier-0 SID patterns — principals that legitimately appear here
+        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $tier0SidPatterns = @(
+            '^S-1-5-32-544$'                                      # BUILTIN\Administrators
+            '^S-1-5-18$'                                          # SYSTEM
+            '^S-1-3-0$'                                           # Creator Owner
+            "^$([regex]::Escape($domSid))-512$"                   # Domain Admins
+            "^$([regex]::Escape($domSid))-519$"                   # Enterprise Admins
+            "^$([regex]::Escape($domSid))-516$"                   # Domain Controllers
+            '^S-1-5-9$'                                           # Enterprise Domain Controllers
+            "^$([regex]::Escape($domSid))-518$"                   # Schema Admins
+        )
+
+        # Control rights mask (GenericAll, WriteDACL, WriteOwner, GenericWrite, CreateChild)
+        $controlMask = [System.DirectoryServices.ActiveDirectoryRights]::GenericAll -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl  -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite
+
+        $aces    = [System.Collections.Generic.List[hashtable]]::new()
+        $suspect = [System.Collections.Generic.List[hashtable]]::new()
+
+        foreach ($ace in $sd.Access) {
+            $sid  = try { $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { '' }
+            $name = try { $ace.IdentityReference.ToString() } catch { $sid }
+            $aceEntry = @{
+                sid     = $sid
+                name    = $name
+                rights  = $ace.ActiveDirectoryRights.ToString()
+                type    = $ace.AccessControlType.ToString()
+                inherit = $ace.IsInherited
+            }
+            [void]$aces.Add($aceEntry)
+
+            # Heuristic: Allow ACE with control rights AND not a Tier-0 well-known principal
+            if ($ace.AccessControlType -eq 'Allow' -and ($ace.ActiveDirectoryRights -band $controlMask)) {
+                $isTier0 = $tier0SidPatterns | Where-Object { $sid -match $_ }
+                if (-not $isTier0) {
+                    [void]$suspect.Add($aceEntry)
+                }
+            }
+        }
+        $result.aces             = $aces.ToArray()
+        $result.suspectAces      = $suspect.ToArray()
+        $result.totalAces        = $aces.Count
+        $result.suspectAceCount  = $suspect.Count
+    } catch { Write-Verbose "[AD-Core] AdminSDHolder DACL read failed: $_" }
+    return $result
+}
+
+# =============================================================================
+# LAPS READ RIGHTS
+# Walks the domain and top-level OUs for inheritable ACEs granting ReadProperty
+# on the LAPS password attribute GUIDs. Lists non-Tier-0 principals.
+# =============================================================================
+
+function _ADC_CollectLAPSReadRights {
+    param([string]$DomainDn)
+    $readers = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        # LAPS attribute schema GUIDs (both v1 and v2)
+        $LAPS_V1_GUID = '1.2.840.113556.1.4.1.160'  # ms-Mcs-AdmPwd (schema attr)
+        # Use the actual extended-right/property GUIDs for LAPS v1 and v2
+        # These are schema attribute GUIDs — ReadProperty ACE ObjectType matches them
+        $lapsGuids = @(
+            [guid]'ms-Mcs-AdmPwd'       # LAPS v1 (schema attribute name → GUID varies by schema)
+        )
+
+        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $tier0Patterns = @(
+            '^S-1-5-32-544$'
+            '^S-1-5-18$'
+            "^$([regex]::Escape($domSid))-512$"
+            "^$([regex]::Escape($domSid))-516$"
+            '^S-1-5-9$'
+        )
+
+        # Check domain object and each first-level OU for inheritable LAPS read ACEs
+        $targets = [System.Collections.Generic.List[string]]::new()
+        [void]$targets.Add($DomainDn)
+        $ouS = _ADC_Searcher -BaseDn $DomainDn -Filter '(objectClass=organizationalUnit)' `
+            -Props @('distinguishedname') -Scope 'OneLevel'
+        $ouS.SearchScope = 'OneLevel'
+        $ouS.FindAll() | ForEach-Object { [void]$targets.Add($_.Properties['distinguishedname'][0].ToString()) }
+
+        foreach ($dn in $targets) {
+            try {
+                $obj = [adsi]"LDAP://$dn"
+                $sd  = $obj.psbase.ObjectSecurity
+                foreach ($ace in $sd.Access) {
+                    # ReadProperty on all properties or on a specific LAPS property
+                    if ($ace.AccessControlType -ne 'Allow') { continue }
+                    $rights = $ace.ActiveDirectoryRights
+                    $hasRead = $rights -band [System.DirectoryServices.ActiveDirectoryRights]::ReadProperty
+                    if (-not $hasRead) { continue }
+                    # Flag all-property reads (no ObjectType restriction) as potential LAPS readers
+                    $isAllProps = ($ace.ObjectType -eq [guid]::Empty)
+                    if ($isAllProps -or $ace.PropagationFlags -ne 'NoPropagateInherit') {
+                        $sid  = try { $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { '' }
+                        $name = try { $ace.IdentityReference.ToString() } catch { $sid }
+                        $isTier0 = $tier0Patterns | Where-Object { $sid -match $_ }
+                        if (-not $isTier0 -and $sid) {
+                            [void]$readers.Add(@{
+                                dn          = $dn
+                                sid         = $sid
+                                name        = $name
+                                allProperties = $isAllProps
+                                inherited   = $ace.IsInherited
+                            })
+                        }
+                    }
+                }
+            } catch {}
+        }
+    } catch { Write-Verbose "[AD-Core] LAPS read rights query failed: $_" }
+    return $readers
 }
 
 # =============================================================================
@@ -444,6 +783,24 @@ function _ADCore_Collect {
 
     Write-Host "         [AD-Core] Default password policy..."
     $pwdPolicy   = _ADC_CollectPasswordPolicy -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Constrained delegation..."
+    $constrainedDelegation = _ADC_CollectConstrainedDelegation -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Shadow credentials (msDS-KeyCredentialLink)..."
+    $shadowCreds = _ADC_CollectShadowCredentials -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Secrets in AD attributes..."
+    $secretsInAttrs = _ADC_CollectSecretsInAttributes -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] gMSA retrieval rights..."
+    $gmsaRights = _ADC_CollectGMSARights -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] AdminSDHolder DACL snapshot..."
+    $adminSdHolder = _ADC_CollectAdminSDHolderDACL -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] LAPS read rights..."
+    $lapsReadRights = _ADC_CollectLAPSReadRights -DomainDn $domainDn
 
     # ── Evaluate findings ─────────────────────────────────────────────────────
     $findings = [System.Collections.Generic.List[object]]::new()
@@ -572,6 +929,95 @@ function _ADCore_Collect {
             -Reference 'https://attack.mitre.org/techniques/T1098/'))
     }
 
+    # ADC-015: Constrained delegation with protocol transition (S4U2Self)
+    $protoTransitionDelegates = @($constrainedDelegation | Where-Object { $_.protocolTransition })
+    if ($protoTransitionDelegates.Count -gt 0) {
+        $names = ($protoTransitionDelegates | Select-Object -First 5 | ForEach-Object { $_.samAccount }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-015' -Severity 'High' `
+            -Technique 'T1134.001' `
+            -Description "$($protoTransitionDelegates.Count) account(s) have constrained delegation with protocol transition (S4U2Self — TrustedToAuthForDelegation flag): $names. Protocol transition allows the service to impersonate any user to delegated SPNs without requiring the original Kerberos ticket, enabling lateral movement without prior authentication." `
+            -Reference 'https://attack.mitre.org/techniques/T1134/001/'))
+    } elseif ($constrainedDelegation.Count -gt 0) {
+        # Standard constrained delegation without protocol transition is lower risk — informational
+        $names = ($constrainedDelegation | Select-Object -First 5 | ForEach-Object { $_.samAccount }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-015' -Severity 'Informational' `
+            -Technique 'T1134.001' `
+            -Description "$($constrainedDelegation.Count) account(s) have standard constrained delegation (msDS-AllowedToDelegateTo): $names. Constrained delegation limits impersonation to specific SPNs. Verify delegation targets are appropriate and accounts are secured." `
+            -Reference 'https://attack.mitre.org/techniques/T1134/001/'))
+    }
+
+    # ADC-016: Shadow credentials (msDS-KeyCredentialLink populated on unexpected objects)
+    if ($shadowCreds.Count -gt 0) {
+        $preview = ($shadowCreds | Select-Object -First 5 | ForEach-Object { "$($_.samAccount)($($_.keyCount) key(s))" }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-016' -Severity 'Critical' `
+            -Technique 'T1556' `
+            -Description "$($shadowCreds.Count) object(s) have msDS-KeyCredentialLink populated: $preview. This attribute binds a Kerberos certificate credential — an attacker with write access can add a shadow credential to maintain persistent privileged access (PKINIT authentication) even after password resets." `
+            -Reference 'https://attack.mitre.org/techniques/T1556/'))
+    }
+
+    # ADC-017: Secrets in AD attributes
+    if ($secretsInAttrs.Count -gt 0) {
+        $preview = ($secretsInAttrs | Select-Object -First 3 | ForEach-Object { "$($_.samAccount):$($_.attribute)" }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-017' -Severity 'High' `
+            -Technique 'T1552.004' `
+            -Description "$($secretsInAttrs.Count) account(s)/computer(s) have password-like strings in AD description/info/comment attributes: $preview. These attributes are readable by all authenticated users and are a common plaintext credential exposure vector." `
+            -Reference 'https://attack.mitre.org/techniques/T1552/004/'))
+    }
+
+    # ADC-018: gMSA over-broad retrieval rights
+    $broadGmsa = @($gmsaRights | Where-Object { $_.allowedCount -gt 5 })
+    if ($gmsaRights.Count -gt 0) {
+        $preview = ($gmsaRights | Select-Object -First 5 | ForEach-Object { "$($_.samAccount)($($_.allowedCount) principal(s))" }) -join ', '
+        $sev = if ($broadGmsa.Count -gt 0) { 'Medium' } else { 'Informational' }
+        $findings.Add((New-Finding -Id 'ADC-018' -Severity $sev `
+            -Technique 'T1003' `
+            -Description "$($gmsaRights.Count) Group Managed Service Account(s) present. $($broadGmsa.Count) have more than 5 principals authorized to retrieve their managed password: $preview. Over-broad gMSA read rights can allow credential theft from any authorized principal." `
+            -Reference 'https://attack.mitre.org/techniques/T1003/'))
+    }
+
+    # ADC-019: AdminSDHolder — non-Tier-0 ACEs
+    if ($adminSdHolder.suspectAceCount -gt 0) {
+        $names = ($adminSdHolder.suspectAces | Select-Object -First 5 | ForEach-Object { "$($_.name)($($_.rights))" }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-019' -Severity 'Critical' `
+            -Technique 'T1098' `
+            -Description "$($adminSdHolder.suspectAceCount) non-Tier-0 principal(s) have control rights on CN=AdminSDHolder: $names. SDProp runs every 60 min and propagates AdminSDHolder ACEs to all adminCount=1 objects — a planted ACE here grants persistent privileged access to all protected accounts across the domain." `
+            -Reference 'https://attack.mitre.org/techniques/T1098/'))
+    }
+
+    # ADC-020: LAPS over-broad read rights
+    if ($lapsReadRights.Count -gt 0) {
+        $preview = ($lapsReadRights | Select-Object -Unique -First 5 | ForEach-Object { $_.name }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-020' -Severity 'High' `
+            -Technique 'T1555' `
+            -Description "$($lapsReadRights.Count) ACE(s) on domain/OU objects grant non-Tier-0 principals inheritable ReadProperty: $preview. These principals may be able to read LAPS-managed local administrator passwords, enabling lateral movement to any LAPS-managed workstation." `
+            -Reference 'https://attack.mitre.org/techniques/T1555/'))
+    }
+
+    # ADC-021: sIDHistory populated
+    if ($accounts.sidHistoryAccounts.Count -gt 0) {
+        $preview = ($accounts.sidHistoryAccounts | Select-Object -First 5 | ForEach-Object { $_.samAccount }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-021' -Severity 'High' `
+            -Technique 'T1134.005' `
+            -Description "$($accounts.sidHistoryAccounts.Count) account(s) have sIDHistory populated: $preview. SID history allows an account to carry SIDs from previous domains; attackers abuse this for silent privilege escalation across trusts. Each entry should be reviewed and cleared if migration is complete." `
+            -Reference 'https://attack.mitre.org/techniques/T1134/005/'))
+    }
+
+    # ADC-022: PASSWD_NOTREQD accounts
+    if ($accounts.passwdNotRequired.Count -gt 0) {
+        $findings.Add((New-Finding -Id 'ADC-022' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "$($accounts.passwdNotRequired.Count) account(s) have PASSWD_NOTREQD UAC flag set: $($accounts.passwdNotRequired -join ', '). These accounts may have blank or empty passwords. Verify they are not enabled or that authentication is restricted to MFA/Kerberos-only channels." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-023: Reversible encryption (cleartext password storage)
+    if ($accounts.reversibleEncryption.Count -gt 0) {
+        $findings.Add((New-Finding -Id 'ADC-023' -Severity 'High' `
+            -Technique 'T1555.003' `
+            -Description "$($accounts.reversibleEncryption.Count) account(s) have ENCRYPTED_TEXT_PASSWORD_ALLOWED (reversible encryption) set: $($accounts.reversibleEncryption -join ', '). AD stores these passwords in a reversibly encrypted form — anyone with domain replication rights or DCSync access can recover the plaintext password." `
+            -Reference 'https://attack.mitre.org/techniques/T1555/003/'))
+    }
+
     # ── Emit records ──────────────────────────────────────────────────────────
 
     # Domain record
@@ -592,15 +1038,22 @@ function _ADCore_Collect {
             kerberos         = $kerberos
             passwordPolicy   = $pwdPolicy
             accountsSummary  = @{
-                totalUsers           = $accounts.totalUsers
-                enabledUsers         = $accounts.enabledUsers
-                staleUsers           = $accounts.staleUsers
-                kerberoastableCount  = $accounts.kerberoastable.Count
-                asrepRoastableCount  = $accounts.asrepRoastable.Count
-                desOnlyCount         = $accounts.desOnly.Count
+                totalUsers                   = $accounts.totalUsers
+                enabledUsers                 = $accounts.enabledUsers
+                staleUsers                   = $accounts.staleUsers
+                kerberoastableCount          = $accounts.kerberoastable.Count
+                asrepRoastableCount          = $accounts.asrepRoastable.Count
+                desOnlyCount                 = $accounts.desOnly.Count
                 unconstrainedDelegationCount = $accounts.unconstrainedDelegation.Count
-                rbcdCount            = $accounts.rbcd.Count
-                adminSdHolderCount   = $accounts.adminSdHolder.Count
+                rbcdCount                    = $accounts.rbcd.Count
+                adminSdHolderCount           = $accounts.adminSdHolder.Count
+                passwdNotRequiredCount       = $accounts.passwdNotRequired.Count
+                reversibleEncryptionCount    = $accounts.reversibleEncryption.Count
+                sidHistoryCount              = $accounts.sidHistoryAccounts.Count
+                shadowCredentialCount        = $shadowCreds.Count
+                secretsInAttrsCount          = $secretsInAttrs.Count
+                constrainedDelegationCount   = $constrainedDelegation.Count
+                gmsaCount                    = $gmsaRights.Count
             }
             dcSyncHolders    = $dcSyncHolders.ToArray()
         } `
@@ -642,8 +1095,8 @@ function _ADCore_Collect {
             -RunId $runId))
     }
 
-    # Delegation record
-    if ($accounts.unconstrainedDelegation.Count -gt 0 -or $accounts.rbcd.Count -gt 0) {
+    # Delegation record (unconstrained + RBCD + constrained)
+    if ($accounts.unconstrainedDelegation.Count -gt 0 -or $accounts.rbcd.Count -gt 0 -or $constrainedDelegation.Count -gt 0) {
         $records.Add((New-ReconRecord `
             -Collector      'AD-Core' `
             -ObjectType     'delegation' `
@@ -652,10 +1105,91 @@ function _ADCore_Collect {
             -Tier           'T0' `
             -CollectedAtPriv $false `
             -Attributes     @{
-                domain                = $domainFQDN
-                unconstrainedNonDC    = $accounts.unconstrainedDelegation.ToArray()
-                rbcdObjects           = $accounts.rbcd.ToArray()
+                domain                  = $domainFQDN
+                unconstrainedNonDC      = $accounts.unconstrainedDelegation.ToArray()
+                rbcdObjects             = $accounts.rbcd.ToArray()
+                constrainedDelegation   = $constrainedDelegation.ToArray()
             } `
+            -RunId $runId))
+    }
+
+    # Shadow credentials record
+    if ($shadowCreds.Count -gt 0) {
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'shadow-credentials' `
+            -StableId       "ADCore:shadow-creds:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T0' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain   = $domainFQDN
+                accounts = $shadowCreds.ToArray()
+                total    = $shadowCreds.Count
+            } `
+            -RunId $runId))
+    }
+
+    # AdminSDHolder DACL snapshot (config record — diff engine tracks ACE changes across runs)
+    if ($adminSdHolder.dn) {
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'adminsdholder-dacl' `
+            -StableId       "ADCore:adminsdholder:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T0' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain          = $domainFQDN
+                dn              = $adminSdHolder.dn
+                totalAces       = $adminSdHolder.totalAces
+                suspectAceCount = $adminSdHolder.suspectAceCount
+                suspectAces     = $adminSdHolder.suspectAces
+                allAces         = $adminSdHolder.aces
+            } `
+            -RunId $runId))
+    }
+
+    # gMSA record
+    if ($gmsaRights.Count -gt 0) {
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'gmsa-rights' `
+            -StableId       "ADCore:gmsa:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T1' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain   = $domainFQDN
+                accounts = $gmsaRights.ToArray()
+                total    = $gmsaRights.Count
+            } `
+            -RunId $runId))
+    }
+
+    # UAC hygiene accounts (passwd-not-required, reversible encryption, sIDHistory)
+    $uacHygieneData = @{
+        domain               = $domainFQDN
+        passwdNotRequired    = $accounts.passwdNotRequired.ToArray()
+        reversibleEncryption = $accounts.reversibleEncryption.ToArray()
+        sidHistoryAccounts   = $accounts.sidHistoryAccounts.ToArray()
+        secretsInAttributes  = $secretsInAttrs.ToArray()
+        lapsReadRights       = $lapsReadRights.ToArray()
+    }
+    $hasUacIssues = $accounts.passwdNotRequired.Count -gt 0 -or
+                    $accounts.reversibleEncryption.Count -gt 0 -or
+                    $accounts.sidHistoryAccounts.Count -gt 0 -or
+                    $secretsInAttrs.Count -gt 0 -or
+                    $lapsReadRights.Count -gt 0
+    if ($hasUacIssues) {
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'account-hygiene' `
+            -StableId       "ADCore:account-hygiene:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T1' `
+            -CollectedAtPriv $false `
+            -Attributes     $uacHygieneData `
             -RunId $runId))
     }
 
@@ -664,6 +1198,6 @@ function _ADCore_Collect {
 
 Register-Collector `
     -Name        'AD-Core' `
-    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, RBCD), privileged groups, ACL risks, password policy, trusts' `
+    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, constrained/RBCD), shadow credentials, AdminSDHolder DACL, gMSA rights, LAPS read rights, account hygiene (sIDHistory, PASSWD_NOTREQD, reversible encryption, secrets-in-attrs), privileged groups, DCSync rights, password policy, trusts' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _ADCore_Collect @PSBoundParameters }

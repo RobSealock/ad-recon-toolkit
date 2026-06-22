@@ -1166,4 +1166,150 @@
         MinPriv        = 'AnyAuthUser'
     }
 
+    # ── AD-Core Sprint 1 extensions ──────────────────────────────────────────
+
+    'ADC-015' = @{
+        Techniques     = @('T1134.001')
+        TechniqueNames = @('Access Token Manipulation: Token Impersonation/Theft')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate msDS-AllowedToDelegateTo via LDAP — read-only constrained delegation audit'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no changes made'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'Read-only LDAP enumeration'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-016' = @{
+        Techniques     = @('T1556')
+        TechniqueNames = @('Modify Authentication Process')
+        AtomicTests    = @(
+            @{
+                Guid        = '3a159042-69e6-4398-8c06-5a7b8f8e0c9d'
+                Name        = 'Whisker — list shadow credentials for target (read-only enumeration, no addition)'
+                Destructive = $false
+                Rollback    = 'Whisker /list mode enumerates msDS-KeyCredentialLink — no credentials added'
+            }
+        )
+        ConfirmationEvents = @(5136,4662)
+        BlastRadius    = 'LDAP read of msDS-KeyCredentialLink — no credential modification'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-017' = @{
+        Techniques     = @('T1552.004')
+        TechniqueNames = @('Unsecured Credentials: Private Keys')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'LDAP filter search for description/info/comment containing password-like strings — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP attribute enumeration — no changes to AD'
+            }
+        )
+        ConfirmationEvents = @(4662)
+        BlastRadius    = 'LDAP read of user/computer description attributes — no changes'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-018' = @{
+        Techniques     = @('T1003')
+        TechniqueNames = @('OS Credential Dumping')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate msDS-GroupMSAMembership on gMSA objects via LDAP — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no managed password retrieved'
+            }
+        )
+        ConfirmationEvents = @(4662)
+        BlastRadius    = 'LDAP enumeration of gMSA principals — no password material read'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-019' = @{
+        Techniques     = @('T1098')
+        TechniqueNames = @('Account Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read AdminSDHolder DACL via ADSI ObjectSecurity — passive ACL snapshot'
+                Destructive = $false
+                Rollback    = 'LDAP nTSecurityDescriptor read — no ACE added or modified'
+            }
+        )
+        ConfirmationEvents = @(4662,5136)
+        BlastRadius    = 'LDAP DACL read of CN=AdminSDHolder — no changes to ACL'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-020' = @{
+        Techniques     = @('T1555')
+        TechniqueNames = @('Credentials from Password Stores')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate OU and domain DACLs for inheritable ReadProperty on ms-Mcs-AdmPwd — LDAP read'
+                Destructive = $false
+                Rollback    = 'LDAP DACL walk — no LAPS password read, no changes'
+            }
+        )
+        ConfirmationEvents = @(4662)
+        BlastRadius    = 'Read-only DACL enumeration on domain/OU objects — LAPS passwords not read'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-021' = @{
+        Techniques     = @('T1134.005')
+        TechniqueNames = @('Access Token Manipulation: SID-History Injection')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate accounts with sIDHistory via LDAP filter (sIDHistory=*) — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no SID modification'
+            }
+        )
+        ConfirmationEvents = @(4765,4766)
+        BlastRadius    = 'LDAP enumeration — no changes to sIDHistory'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-022' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate PASSWD_NOTREQD accounts via LDAP userAccountControl filter — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP filter enumeration — no password or UAC change'
+            }
+        )
+        ConfirmationEvents = @(4723,4624)
+        BlastRadius    = 'LDAP read — no account modification'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-023' = @{
+        Techniques     = @('T1555.003')
+        TechniqueNames = @('Credentials from Password Stores: Credentials from Web Browsers')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Enumerate ENCRYPTED_TEXT_PASSWORD_ALLOWED accounts via LDAP UAC filter — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no password or UAC modification'
+            }
+        )
+        ConfirmationEvents = @(4738)
+        BlastRadius    = 'LDAP enumeration — no credentials extracted'
+        MinPriv        = 'AnyAuthUser'
+    }
+
 }
