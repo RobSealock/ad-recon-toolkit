@@ -37,6 +37,49 @@ output\
 See `bootstrap\tools.manifest.psd1` for the full list of required and optional tool downloads with URLs.
 Run `Install-Prereqs.ps1` to fetch and verify all binaries automatically (requires internet access on first run).
 
+## Optional: Certipy (AD CS / ESC1–ESC16)
+
+Certipy is an optional Python-based AD CS enumerator. When enabled it runs alongside Locksmith and acts as the primary authoritative scanner for certificate template and CA misconfigurations (ESC1–ESC16).
+
+**Prerequisites**
+
+- Python 3.8+ with pip installed on the run host
+- Domain credentials with read access to AD CS (standard user is sufficient for enumeration)
+
+**Install**
+
+`Install-Prereqs.ps1` handles this automatically — it runs `pip install certipy-ad`, locates the installed `certipy.exe`, and copies it to `tools\bin\`. To do it manually:
+
+```powershell
+pip install certipy-ad
+# Then copy certipy.exe from your Python Scripts directory to tools\bin\
+```
+
+**Configure credentials**
+
+Certipy requires explicit credentials on Windows (the Linux Kerberos ccache is not available). Add the following to `config\settings.local.psd1` (git-ignored — never commit this file):
+
+```powershell
+@{
+    EnableCertipy      = $true
+    CertipyUsername    = 'DOMAIN\serviceaccount'   # or UPN: user@domain.com
+    CertipyPassword    = 'password'
+}
+```
+
+Alternatively, merge into an existing `settings.local.psd1` block. On Linux/macOS, `CertipyUsername`/`CertipyPassword` can be omitted if a valid Kerberos ticket is present (`kinit` has run for the assessment account).
+
+**Enable**
+
+Set `EnableCertipy = $true` in `config\settings.psd1` (applies to all runs) or in `config\settings.local.psd1` (local override only). It is disabled by default.
+
+**What it produces**
+
+- `output\runs\<RunId>\artifacts\certipy-findings.json` — raw Certipy output
+- `certipy-findings` record in the run JSON — lists vulnerable CAs/templates with ESC IDs
+- ADCS-008 findings (prefixed `[Certipy]`) in the CA-Config collector results
+- `certipyCoveredEscIds` field in the `ca-inventory` record — provenance of which ESC IDs were evaluated this run
+
 ## Scope
 
 See `SCOPE.md` for the full build brief and collector catalog.
