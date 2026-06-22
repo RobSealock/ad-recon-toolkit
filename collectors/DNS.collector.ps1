@@ -13,6 +13,8 @@
 #   DNS-005  A/AAAA record name not matching any AD computer account (orphaned/rogue)
 #   DNS-006  DnsAdmins group has members (DLL injection path to SYSTEM on DNS server)
 #   DNS-007  Non-Tier-0 principal has CreateChild/WriteProperty on MicrosoftDNS or zone (ADIDNS write)
+#   DNS-008  Zone allows AXFR (zone transfer) to any IP (full zone data exposure)
+#   DNS-009  DNS forwarders include public/external IP addresses
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -319,6 +321,18 @@ function _DNS_Collect {
                     -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
             }
 
+            # DNS-008: Zone transfer restriction
+            # Get-DnsServerZone has a SecureSecondaries / SecondaryServers property
+            try {
+                $dnsZone = Get-DnsServerZone -Name $zoneName -ComputerName $dnsServer -EA SilentlyContinue
+                if ($dnsZone -and $dnsZone.SecureSecondaries -eq 'NoSecureSecondaries') {
+                    $zoneFindings.Add((New-Finding -Id 'DNS-008' -Severity 'High' `
+                        -Technique 'T1590.002' `
+                        -Description "DNS zone '$zoneName' allows unrestricted AXFR zone transfers (SecureSecondaries=NoSecureSecondaries). Any host can request a full zone transfer and enumerate all DNS records — including internal hostnames, IP ranges, and service names. Restrict zone transfers to authorized secondary servers only, or disable AXFR if not needed." `
+                        -Reference 'https://attack.mitre.org/techniques/T1590/002/'))
+                }
+            } catch { Write-Verbose "[DNS] Zone transfer check failed for $zoneName`: $_" }
+
             # Emit zone record
             $records.Add((New-ReconRecord `
                 -Collector      'DNS' `
@@ -343,6 +357,30 @@ function _DNS_Collect {
                 -RunId          $runId))
         }
 
+        # DNS-009: External forwarders
+        try {
+            $forwarders = Get-DnsServerForwarder -ComputerName $dnsServer -EA SilentlyContinue
+            if ($forwarders -and $forwarders.IPAddress) {
+                $publicForwarders = @($forwarders.IPAddress | Where-Object {
+                    $ip = $_.ToString()
+                    # Exclude RFC1918 and common private ranges
+                    -not ($ip -match '^10\.' -or $ip -match '^192\.168\.' -or
+                          $ip -match '^172\.(1[6-9]|2[0-9]|3[01])\.' -or
+                          $ip -match '^127\.' -or $ip -match '^::1$' -or
+                          $ip -match '^fd' -or $ip -match '^169\.254\.')
+                })
+                if ($publicForwarders.Count -gt 0) {
+                    $allNew24h.Add("DNS-009: $dnsServer has public forwarders: $($publicForwarders -join ', ')") | Out-Null
+                    # Forwarder finding goes into the domain-level summary findings (daFindings)
+                    # We store it for later use since daFindings is built below
+                    $script:_dns009Finding = New-Finding -Id 'DNS-009' -Severity 'Medium' `
+                        -Technique 'T1590.002' `
+                        -Description "DNS server '$dnsServer' has forwarders pointing to public/external IPs: $($publicForwarders -join ', '). Forwarding internal DNS queries to external resolvers exposes internal hostnames and query patterns externally, and may bypass internal split-brain DNS. Consider using internal forwarders or conditional forwarding only. External forwarders also expose the environment to DNS-based data exfiltration (covert channel via DNS queries)." `
+                        -Reference 'https://attack.mitre.org/techniques/T1590/002/'
+                }
+            }
+        } catch { Write-Verbose "[DNS] Forwarder check failed: $_" }
+
         # ── ADIDNS zone write rights ──────────────────────────────────────────
         Write-Verbose '[DNS] Checking ADIDNS zone write rights (DACL walk)...'
         $zoneWriters = _DNS_CollectZoneWriteRights -DomainDn $domainDn
@@ -365,6 +403,12 @@ function _DNS_Collect {
                 -Technique 'T1557.001' `
                 -Description "$($uniqueWriters.Count) non-Tier-0 ACE(s) grant CreateChild/WriteProperty on the MicrosoftDNS container or individual zone objects: $preview. Direct LDAP write to ADIDNS bypasses the DNS server's secure dynamic update check — any principal with CreateChild can register arbitrary DNS records (including WPAD, wildcard, or spoofed entries) regardless of zone dynamic-update policy." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
+        }
+
+        # DNS-009: add forwarder finding if detected
+        if ($script:_dns009Finding) {
+            $daFindings.Add($script:_dns009Finding)
+            $script:_dns009Finding = $null
         }
 
         # ── Summary record ────────────────────────────────────────────────────
@@ -398,6 +442,6 @@ function _DNS_Collect {
 
 Register-Collector `
     -Name        'DNS' `
-    -Description 'AD-integrated DNS: all zones, all records, dynamic update policy, WPAD/wildcard, 24-hour new record alert, orphaned record detection, DnsAdmins' `
+    -Description 'AD-integrated DNS: all zones, all records, dynamic update policy, WPAD/wildcard, 24-hour new record alert, orphaned record detection, DnsAdmins, zone transfer restrictions (DNS-008), external forwarders (DNS-009)' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _DNS_Collect @PSBoundParameters }

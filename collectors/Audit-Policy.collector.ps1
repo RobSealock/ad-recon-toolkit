@@ -35,6 +35,7 @@
 #   AUD-011   Security log max size below CIS minimum (196608 KB / 192 MB)
 #   AUD-012   Sysmon not installed or config not loaded on DC
 #   AUD-013   NTDS Field Engineering diagnostic level < 5 (no 1644 expensive LDAP events)
+#   AUD-014   Windows Event Forwarding (WEC) subscription not configured on DC — no centralized log collection
 
 # =============================================================================
 # AUDIT SUBCATEGORY GUID CONSTANTS
@@ -85,22 +86,23 @@ $script:_AUD_RemoteScript = {
     param([string[]]$EdrServiceNames)
 
     $result = @{
-        computerName         = $env:COMPUTERNAME
-        auditPolicy          = @{}          # GUID (upper) → inclusion-setting string
-        psScriptBlockLogging = 'NotConfigured'
-        psCmdLineEnabled     = 'NotConfigured'
-        psTranscription      = 'NotConfigured'
-        sysmon               = @{
+        computerName                    = $env:COMPUTERNAME
+        auditPolicy                     = @{}          # GUID (upper) → inclusion-setting string
+        psScriptBlockLogging            = 'NotConfigured'
+        psCmdLineEnabled                = 'NotConfigured'
+        psTranscription                 = 'NotConfigured'
+        sysmon                          = @{
             installed    = $false
             configLoaded = $false
             serviceName  = ''
         }
-        wefSubscriptionCount = 0
-        logSizes             = @{}          # logName → maxSizeKB (int)
-        ntdsDiagLevel        = -1           # Field Engineering; -1 = registry not read
-        edrProducts          = @()
-        amsiActive           = $false
-        collectionErrors     = @()
+        wefSubscriptionCount            = 0
+        wefSubscriptionManagerConfigured= $false
+        logSizes                        = @{}          # logName → maxSizeKB (int)
+        ntdsDiagLevel                   = -1           # Field Engineering; -1 = registry not read
+        edrProducts                     = @()
+        amsiActive                      = $false
+        collectionErrors                = @()
     }
 
     # ── Audit policy (GUID-keyed, locale-independent) ──────────────────────────
@@ -159,11 +161,23 @@ $script:_AUD_RemoteScript = {
         }
     } catch { $result.collectionErrors += "Sysmon: $_" }
 
-    # ── WEF subscriptions ──────────────────────────────────────────────────────
+    # ── WEF subscriptions (WEC server side — subscriptions this DC accepts) ───────
     try {
         $subKeys = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\EventCollector\Subscriptions' -ErrorAction SilentlyContinue
         $result.wefSubscriptionCount = if ($subKeys) { @($subKeys).Count } else { 0 }
     } catch { $result.collectionErrors += "WEF: $_" }
+
+    # ── WEF SubscriptionManager (client side — DC forwards events to a WEC server) ──
+    try {
+        $smPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\EventForwarding\SubscriptionManager'
+        if (Test-Path $smPath) {
+            $smValues = Get-ItemProperty $smPath -ErrorAction SilentlyContinue
+            $result.wefSubscriptionManagerConfigured = ($smValues -and
+                ($smValues.PSObject.Properties | Where-Object { $_.Name -ne 'PSPath' -and $_.Name -ne 'PSParentPath' -and $_.Name -ne 'PSChildName' -and $_.Name -ne 'PSDrive' -and $_.Name -ne 'PSProvider' }).Count -gt 0)
+        } else {
+            $result.wefSubscriptionManagerConfigured = $false
+        }
+    } catch { $result.collectionErrors += "WEFSubMgr: $_"; $result.wefSubscriptionManagerConfigured = $false }
 
     # ── Event log sizes ────────────────────────────────────────────────────────
     try {
@@ -471,6 +485,19 @@ function _AUD_EvaluateFindings {
             -Reference 'https://attack.mitre.org/techniques/T1069/002/'))
     }
 
+    # ── AUD-014: Windows Event Forwarding subscription manager not configured ──
+    # The WEF SubscriptionManager policy (HKLM\SOFTWARE\Policies\Microsoft\Windows\
+    # EventLog\EventForwarding\SubscriptionManager) configures the DC to forward
+    # events to a Windows Event Collector (WEC) server. Without this, DC security
+    # events are only stored locally — lost if the DC is compromised and logs cleared.
+    $bad014 = Get-FailingDCs { param($dc) -not $dc.wefSubscriptionManagerConfigured }
+    if ($bad014.Count -gt 0) {
+        $findings.Add((New-Finding -Id 'AUD-014' -Severity 'Medium' `
+            -Technique 'T1562.002' `
+            -Description "Windows Event Forwarding (WEF) SubscriptionManager is NOT configured on: $($bad014 -join ', '). Without WEF, DC security event logs are stored only on the DC itself — an attacker who clears event logs after compromise destroys the forensic record. WEF forwards events in near-real-time to a centralized Windows Event Collector (WEC) server, providing log durability even if the DC is re-imaged. Configure via GPO: Computer Configuration > Administrative Templates > Windows Components > Event Forwarding > Configure the WEC server address (SubscriptionManager). Alternatively, verify a SIEM agent (Splunk UF, NXLog, MDE) is shipping events off-host." `
+            -Reference 'https://attack.mitre.org/techniques/T1562/002/'))
+    }
+
     return $findings
 }
 
@@ -530,18 +557,19 @@ function _AUDPolicy_Collect {
             -Tier           'T0' `
             -CollectedAtPriv $true `
             -Attributes     @{
-                computerName         = $ht.computerName
-                auditPolicy          = $ht.auditPolicy
-                psScriptBlockLogging = $ht.psScriptBlockLogging
-                psCmdLineEnabled     = $ht.psCmdLineEnabled
-                psTranscription      = $ht.psTranscription
-                sysmon               = $ht.sysmon
-                wefSubscriptionCount = $ht.wefSubscriptionCount
-                logSizes             = $ht.logSizes
-                ntdsDiagLevel        = $ht.ntdsDiagLevel
-                amsiActive           = $ht.amsiActive
-                edrProducts          = $ht.edrProducts
-                collectionErrors     = $ht.collectionErrors
+                computerName                     = $ht.computerName
+                auditPolicy                      = $ht.auditPolicy
+                psScriptBlockLogging             = $ht.psScriptBlockLogging
+                psCmdLineEnabled                 = $ht.psCmdLineEnabled
+                psTranscription                  = $ht.psTranscription
+                sysmon                           = $ht.sysmon
+                wefSubscriptionCount             = $ht.wefSubscriptionCount
+                wefSubscriptionManagerConfigured = $ht.wefSubscriptionManagerConfigured
+                logSizes                         = $ht.logSizes
+                ntdsDiagLevel                    = $ht.ntdsDiagLevel
+                amsiActive                       = $ht.amsiActive
+                edrProducts                      = $ht.edrProducts
+                collectionErrors                 = $ht.collectionErrors
             } `
             -RunId $runId))
     }
@@ -584,6 +612,6 @@ function _AUDPolicy_Collect {
 
 Register-Collector `
     -Name        'Audit-Policy' `
-    -Description 'DC audit policy (GUID-keyed auditpol), PS ScriptBlock/cmdline logging, Sysmon config, WEF, log sizes, NTDS diagnostics, EDR presence — with CIS benchmark anchoring and EDR cross-reference' `
+    -Description 'DC audit policy (GUID-keyed auditpol), PS ScriptBlock/cmdline logging, Sysmon config, WEF/WEC SubscriptionManager (AUD-014), log sizes, NTDS diagnostics, EDR presence — with CIS benchmark anchoring and EDR cross-reference' `
     -MinPrivilege 'LocalAdmin' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _AUDPolicy_Collect @PSBoundParameters }

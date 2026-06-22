@@ -34,6 +34,13 @@
 #   HOST-018  EFS service running on DC (PetitPotam / MS-EFSRPC coercion surface)
 #   HOST-019  DFS Namespace service on DC (DFSCoerce / MS-DFSNM coercion surface)
 #   HOST-020  ESC10 — StrongCertificateBindingEnforcement not at full enforcement on DC
+#   HOST-021  NTLMv1/LM authentication enabled (LmCompatibilityLevel < 5)
+#   HOST-022  Credential Guard not enabled
+#   HOST-023  PowerShell v2 not removed (bypasses ScriptBlock logging)
+#   HOST-024  LDAP channel binding not required (DC only)
+#   HOST-025  WinRM HTTP unencrypted allowed
+#   HOST-026  Remote Registry service running on DC
+#   HOST-027  BitLocker not enabled on DC volumes (DC only)
 
 # ── Roles considered unexpected on a Domain Controller ───────────────────────
 $script:_HostOS_UnexpectedDCRoles = @(
@@ -358,6 +365,39 @@ $script:_HostOS_Script = {
         $schMapping = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\Schannel' -Name CertificateMappingMethods -EA SilentlyContinue).CertificateMappingMethods
         $f.schannelCertMappingMethods = if ($null -eq $schMapping) { -1 } else { [int]$schMapping }
 
+        # NTLM LmCompatibilityLevel (controls LM/NTLMv1/NTLMv2 acceptance)
+        # 0-4 = allow NTLMv1 or LM; 5 = NTLMv2 only + refuse LM/NTLMv1 (best practice)
+        $lmCompat = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -EA SilentlyContinue).LmCompatibilityLevel
+        $f.lmCompatibilityLevel = if ($null -eq $lmCompat) { 3 } else { [int]$lmCompat }
+
+        # LDAP channel binding (enforced separately from LDAP signing)
+        # 0 = never, 1 = if supported, 2 = always (required for full LDAP relay protection)
+        $lcb = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LdapEnforceChannelBinding -EA SilentlyContinue).LdapEnforceChannelBinding
+        $f.ldapChannelBinding = if ($null -eq $lcb) { 0 } else { [int]$lcb }
+
+        # WinRM unencrypted traffic allowed (HTTP without HTTPS)
+        $winrmUnenc = (& $rp 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service' -Name AllowUnencrypted -EA SilentlyContinue).AllowUnencrypted
+        $f.winrmAllowUnencrypted = ($winrmUnenc -eq 1)
+
+        # PowerShell v2 presence (enables ScriptBlock logging bypass)
+        $psv2feature = Get-WindowsOptionalFeature -Online -FeatureName 'MicrosoftWindowsPowerShellV2Root' -EA SilentlyContinue
+        if (-not $psv2feature) {
+            # Server OS — use Get-WindowsFeature
+            $psv2feature = Get-WindowsFeature -Name 'PowerShell-V2' -EA SilentlyContinue
+        }
+        $f.psV2Present = ($null -ne $psv2feature -and $psv2feature.State -in @('Enabled','Installed','InstallPending'))
+
+        # Remote Registry service
+        $remReg = Get-Service 'RemoteRegistry' -EA SilentlyContinue
+        $f.remoteRegistryRunning = ($remReg -and $remReg.Status -eq 'Running')
+
+        # BitLocker on OS volume (DC only check — use manage-bde or Get-BitLockerVolume)
+        $f.bitlockerOsVolumeProtected = $false
+        try {
+            $bl = Get-BitLockerVolume -MountPoint $env:SystemDrive -EA SilentlyContinue
+            $f.bitlockerOsVolumeProtected = ($bl -and $bl.VolumeStatus -eq 'FullyEncrypted' -and $bl.ProtectionStatus -eq 'On')
+        } catch {}
+
         # Local Administrator account
         $la = Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
         $f.localAdminEnabled        = if ($la) { [bool]$la.Enabled } else { $false }
@@ -609,6 +649,76 @@ function _HostOS_EvaluateFindings {
                     -Reference 'https://attack.mitre.org/techniques/T1649/'))
             }
         }
+
+        # HOST-021 NTLMv1/LM enabled
+        if ($sf.lmCompatibilityLevel -lt 5) {
+            $lvlDesc = switch ($sf.lmCompatibilityLevel) {
+                0 { 'value=0 — sends LM and NTLM responses, never NTLMv2' }
+                1 { 'value=1 — sends LM and NTLM, NTLMv2 if negotiated' }
+                2 { 'value=2 — sends NTLM only' }
+                3 { 'value=3 — sends NTLMv2 only' }
+                4 { 'value=4 — DCs refuse LM' }
+                default { "value=$($sf.lmCompatibilityLevel)" }
+            }
+            $findings.Add((New-Finding -Id 'HOST-021' -Severity 'High' `
+                -Technique 'T1557.001' `
+                -Description "LmCompatibilityLevel on $host is $lvlDesc. Value must be 5 (NTLMv2 only — refuse LM and NTLMv1 challenge/response) to prevent capture and relay of weak authentication material. Registry: HKLM\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
+        }
+
+        # HOST-022 Credential Guard not enabled
+        if (-not $sf.credentialGuardEnabled) {
+            $sev = if ($isDC) { 'High' } else { 'Medium' }
+            $findings.Add((New-Finding -Id 'HOST-022' -Severity $sev `
+                -Technique 'T1003.001' `
+                -Description "Credential Guard (Virtualization Based Security / LSASS isolation) is NOT enabled on $host. Without Credential Guard, LSASS memory can be read by a local admin to extract NTLM hashes and Kerberos tickets (pass-the-hash / pass-the-ticket). Requires: VBS enabled (EnableVirtualizationBasedSecurity=1) + LsaCfgFlags >= 1. Registry: HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard." `
+                -Reference 'https://attack.mitre.org/techniques/T1003/001/'))
+        }
+
+        # HOST-023 PowerShell v2 present (bypasses ScriptBlock logging)
+        if ($sf.psV2Present) {
+            $findings.Add((New-Finding -Id 'HOST-023' -Severity 'Medium' `
+                -Technique 'T1059.001' `
+                -Description "PowerShell version 2 is present on $host. PS v2 does not support ScriptBlock logging, AMSI, or Constrained Language Mode — an attacker can invoke 'powershell.exe -Version 2' to bypass all modern PowerShell security controls. Remove via: Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root (client) or Remove-WindowsFeature PowerShell-V2 (server)." `
+                -Reference 'https://attack.mitre.org/techniques/T1059/001/'))
+        }
+
+        # HOST-024 LDAP channel binding not required (DC only)
+        if ($isDC -and $sf.ldapChannelBinding -lt 2) {
+            $cbDesc = switch ($sf.ldapChannelBinding) {
+                0 { 'never required (value=0)' }
+                1 { 'required only if client supports it (value=1)' }
+                default { "value=$($sf.ldapChannelBinding)" }
+            }
+            $findings.Add((New-Finding -Id 'HOST-024' -Severity 'High' `
+                -Technique 'T1557' `
+                -Description "LDAP channel binding on DC $host is $cbDesc. Without value=2 (always required), an attacker can relay LDAP authentication even when LDAP signing is enforced — the relay session omits the channel binding token and the DC accepts it. This allows NTLM relay to LDAP for ACL modifications (e.g., granting DCSync rights). Registry: HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters\LdapEnforceChannelBinding. Set to 2; test with ldp.exe before enforcing." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/'))
+        }
+
+        # HOST-025 WinRM HTTP unencrypted allowed
+        if ($sf.winrmAllowUnencrypted) {
+            $findings.Add((New-Finding -Id 'HOST-025' -Severity 'High' `
+                -Technique 'T1557' `
+                -Description "WinRM AllowUnencrypted is enabled on $host (policy: HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencrypted=1). WinRM over HTTP (port 5985) without encryption exposes PowerShell remoting traffic — credentials and session content — to network eavesdropping. Require HTTPS (port 5986) or at minimum disable unencrypted transport and enforce Kerberos auth." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/'))
+        }
+
+        # HOST-026 Remote Registry running on DC
+        if ($isDC -and $sf.remoteRegistryRunning) {
+            $findings.Add((New-Finding -Id 'HOST-026' -Severity 'Medium' `
+                -Technique 'T1012' `
+                -Description "Remote Registry service is running on DC $host. Remote Registry allows authenticated users (with appropriate permissions) to read and modify the registry over the network — a common lateral-movement enumeration vector. DCs do not require this service for standard AD operations. Recommended: disable or set to Manual/Disabled on all DCs." `
+                -Reference 'https://attack.mitre.org/techniques/T1012/'))
+        }
+
+        # HOST-027 BitLocker not enabled on DC OS volume (DC only)
+        if ($isDC -and -not $sf.bitlockerOsVolumeProtected) {
+            $findings.Add((New-Finding -Id 'HOST-027' -Severity 'Medium' `
+                -Technique 'T1005' `
+                -Description "BitLocker is NOT enabled on the OS volume of DC $host. An attacker with physical access (or a malicious hypervisor snapshot) can mount the NTDS.dit and SYSTEM hive offline to extract all domain credentials without any authentication. All DC volumes should be BitLocker-protected with a TPM PIN or startup key stored in a PAM system." `
+                -Reference 'https://attack.mitre.org/techniques/T1005/'))
+        }
     }
 
     return $findings
@@ -729,6 +839,6 @@ function _HostOS_Collect {
 
 Register-Collector `
     -Name        'Host-OS' `
-    -Description 'Per-server OS posture: roles, services, software, shares, local groups, scheduled tasks, security flags — DCs and AD-role servers via WinRM' `
+    -Description 'Per-server OS posture: roles, services, software, shares, local groups, scheduled tasks, security flags — DCs and AD-role servers via WinRM. Findings: HOST-001 through HOST-027 (NTLMv1/LM, Credential Guard, PSv2, LDAP channel binding, WinRM unencrypted, Remote Registry, BitLocker)' `
     -MinPrivilege 'LocalAdmin' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _HostOS_Collect @PSBoundParameters }

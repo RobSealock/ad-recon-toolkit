@@ -39,6 +39,15 @@
 #   ADC-022   PASSWD_NOTREQD UAC flag set
 #   ADC-023   Reversible encryption (ENCRYPTED_TEXT_PASSWORD_ALLOWED)
 #   ADC-024   altSecurityIdentities weak certificate mapping (ESC14)
+#   ADC-025   Pre-Windows 2000 Compatible Access group has Authenticated Users or Everyone
+#   ADC-026   Anonymous LDAP bind allowed (dsHeuristics bit 7)
+#   ADC-027   DA/EA/Schema Admin accounts not enrolled in Protected Users
+#   ADC-028   Privileged accounts with DONT_EXPIRE_PASSWORD flag
+#   ADC-029   Disabled accounts in DA/EA/Schema Admin groups (ghost accounts)
+#   ADC-030   Tombstone lifetime below 180 days
+#   ADC-031   Forest functional level below 2016
+#   ADC-032   Fine-Grained Password Policy grants weaker policy to privileged group
+#   ADC-033   Stale DC computer objects (no logon > 90 days)
 #
 # Review-Required records (not findings — presence flagged for manual review):
 #   RODC, Exchange, SCCM/MECM, ADFS, Entra Connect, WSUS
@@ -193,11 +202,13 @@ function _ADC_GetGroupMembers {
             try {
                 $m   = [adsi]"LDAP://$memberDn"
                 $mp  = $m.Properties
+                $uacVal = if ($mp['useraccountcontrol'].Count) { [int]$mp['useraccountcontrol'][0] } else { 0 }
                 $members.Add(@{
                     dn          = $memberDn.ToString()
                     samAccount  = _ADC_StrProp $mp 'samaccountname'
                     objectClass = if ($mp['objectclass'].Count) { $mp['objectclass'][-1].ToString() } else { '' }
-                    enabled     = if ($mp['useraccountcontrol'].Count) { (([int]$mp['useraccountcontrol'][0]) -band 2) -eq 0 } else { $true }
+                    enabled     = ($uacVal -band 2) -eq 0
+                    uac         = $uacVal
                 })
             } catch {}
         }
@@ -753,6 +764,74 @@ function _ADC_CollectPrivGroups {
 }
 
 # =============================================================================
+# FINE-GRAINED PASSWORD POLICIES
+# =============================================================================
+
+function _ADC_CollectFineGrainedPolicies {
+    param([string]$DomainDn)
+    $results = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $psoContainer = "CN=Password Settings Container,CN=System,$DomainDn"
+        $s = _ADC_Searcher -BaseDn $psoContainer `
+            -Filter '(objectClass=msDS-PasswordSettings)' `
+            -Props @('cn','msDS-MinimumPasswordLength','msDS-PasswordHistoryLength',
+                     'msDS-MaximumPasswordAge','msDS-LockoutThreshold',
+                     'msDS-PSOAppliesTo','msDS-PasswordSettingsPrecedence')
+        $s.SearchScope = 'OneLevel'
+        $s.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            $minLen    = if ($p['msds-minimumpasswordlength'].Count) { [int]$p['msds-minimumpasswordlength'][0] } else { 0 }
+            $lockout   = if ($p['msds-lockoutthreshold'].Count) { [int]$p['msds-lockoutthreshold'][0] } else { 0 }
+            $precedence= if ($p['msds-passwordsettingsprecedence'].Count) { [int]$p['msds-passwordsettingsprecedence'][0] } else { 999 }
+            $appliesTo = @($p['msds-psoappliestodn'] | ForEach-Object { $_.ToString() })
+            $results.Add(@{
+                cn          = if ($p['cn'].Count) { $p['cn'][0].ToString() } else { '' }
+                minLength   = $minLen
+                lockout     = $lockout
+                precedence  = $precedence
+                appliesTo   = $appliesTo
+                weakMinLen  = ($minLen -lt 14)
+                weakLockout = ($lockout -eq 0)
+            })
+        }
+    } catch { Write-Verbose "[AD-Core] Fine-grained password policy query failed: $_" }
+    return $results
+}
+
+function _ADC_CollectStaleDCs {
+    param([string]$DomainDn)
+    $staleDCs = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        # Domain Controllers have primaryGroupID=516
+        $s = _ADC_Searcher -BaseDn $DomainDn `
+            -Filter '(&(objectCategory=computer)(primaryGroupID=516))' `
+            -Props @('cn','dNSHostName','lastLogonTimestamp','operatingSystem','operatingSystemVersion')
+        $cutoff = (Get-Date).AddDays(-90)
+        $s.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            $cn  = if ($p['cn'].Count) { $p['cn'][0].ToString() } else { '?' }
+            $dns = if ($p['dnshostname'].Count) { $p['dnshostname'][0].ToString() } else { '' }
+            $llt = $null
+            if ($p['lastlogontimestamp'].Count) {
+                try { $llt = [DateTime]::FromFileTime($p['lastlogontimestamp'][0]) } catch {}
+            }
+            $os  = if ($p['operatingsystem'].Count) { $p['operatingsystem'][0].ToString() } else { '' }
+            # Flag if never logged on or not logged on in 90+ days
+            if ($null -eq $llt -or $llt -lt $cutoff) {
+                $staleDCs.Add(@{
+                    cn              = $cn
+                    dnsHostName     = $dns
+                    lastLogon       = if ($llt) { $llt.ToString('o') } else { 'never' }
+                    operatingSystem = $os
+                    daysSinceLogon  = if ($llt) { [int]((Get-Date) - $llt).TotalDays } else { -1 }
+                })
+            }
+        }
+    } catch { Write-Verbose "[AD-Core] Stale DC query failed: $_" }
+    return $staleDCs
+}
+
+# =============================================================================
 # ESC14 — ALT SECURITY IDENTITIES (weak certificate mapping)
 # Accounts with altSecurityIdentities values using weak binding forms
 # (X509RFC822: email, X509IssuerSubject: issuer+subject) can be targeted by
@@ -968,6 +1047,12 @@ function _ADCore_Collect {
 
     Write-Host "         [AD-Core] LAPS read rights..."
     $lapsReadRights = _ADC_CollectLAPSReadRights -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Fine-grained password policies..."
+    $fgppList    = _ADC_CollectFineGrainedPolicies -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Stale DC objects..."
+    $staleDCs    = _ADC_CollectStaleDCs -DomainDn $domainDn
 
     # ── Evaluate findings ─────────────────────────────────────────────────────
     $findings = [System.Collections.Generic.List[object]]::new()
@@ -1185,6 +1270,134 @@ function _ADCore_Collect {
             -Reference 'https://attack.mitre.org/techniques/T1555/003/'))
     }
 
+    # ADC-025: Pre-Windows 2000 Compatible Access group has broad members
+    $preWin2kDn = "CN=Pre-Windows 2000 Compatible Access,CN=Builtin,$domainDn"
+    $preWin2kMembers = @()
+    try {
+        $grp = [adsi]"LDAP://$preWin2kDn"
+        $preWin2kMembers = @($grp.Properties['member'] | ForEach-Object { $_.ToString() })
+    } catch {}
+    try {
+        $preWin2kGrp = [adsi]"LDAP://$preWin2kDn"
+        $memberSids = @($preWin2kGrp.Properties['member'] | ForEach-Object { $_.ToString() })
+        $broad = $memberSids | Where-Object { $_ -match 'Everyone|Authenticated Users|World|S-1-1-0|S-1-5-11' }
+        if ($broad.Count -gt 0) {
+            $findings.Add((New-Finding -Id 'ADC-025' -Severity 'High' `
+                -Technique 'T1135' `
+                -Description "Pre-Windows 2000 Compatible Access group contains broad identity: $($broad -join '; '). This built-in group grants access to read various AD objects without explicit access — having 'Everyone' or 'Authenticated Users' here effectively allows anonymous or any-user enumeration of user and group objects compatible with Windows NT 4.0 access semantics. Remove broad identities; the group should be empty or contain only legacy-required specific accounts." `
+                -Reference 'https://attack.mitre.org/techniques/T1135/'))
+        }
+    } catch {}
+
+    # ADC-026: Anonymous LDAP bind allowed (dsHeuristics bit 7 = 1)
+    # dsHeuristics is a string where the 7th character (0-indexed: position 6) controls anonymous access.
+    # Character '2' at position 6 (1-indexed: position 7) enables unauthenticated LDAP bind.
+    $dsh = $domainInfo.dsHeuristics
+    $anonBind = $false
+    if ($dsh.Length -ge 7) {
+        $anonBind = ($dsh[6] -eq '2')
+    }
+    if ($anonBind) {
+        $findings.Add((New-Finding -Id 'ADC-026' -Severity 'Critical' `
+            -Technique 'T1087.002' `
+            -Description "Anonymous LDAP bind is ENABLED (dsHeuristics position 7 = '2'). An unauthenticated attacker can enumerate users, groups, computers, and trusts via LDAP without any credentials. dsHeuristics value: '$dsh'. To remediate: set position 7 to '0' or '1' in the dsHeuristics attribute on the domain object in CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,..." `
+            -Reference 'https://attack.mitre.org/techniques/T1087/002/'))
+    }
+
+    # ADC-027: DA/EA/Schema Admin accounts NOT enrolled in Protected Users
+    $puSet = [System.Collections.Generic.HashSet[string]]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in @($privGroups['Protected Users'])) { if ($m.samAccount) { [void]$puSet.Add($m.samAccount) } }
+    $tier0NotProtected = [System.Collections.Generic.List[string]]::new()
+    foreach ($grp in @('Domain Admins','Enterprise Admins','Schema Admins')) {
+        foreach ($m in @($privGroups[$grp])) {
+            if ($m.samAccount -and $m.enabled -and -not $puSet.Contains($m.samAccount)) {
+                [void]$tier0NotProtected.Add("$($m.samAccount) [$grp]")
+            }
+        }
+    }
+    if ($tier0NotProtected.Count -gt 0) {
+        $preview = ($tier0NotProtected | Select-Object -First 8) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-027' -Severity 'High' `
+            -Technique 'T1003.001' `
+            -Description "$($tier0NotProtected.Count) enabled Tier 0 account(s) are NOT members of Protected Users: $preview. Protected Users membership prevents NTLM authentication, DES/RC4 Kerberos, credential caching (CredSSP/WDigest/Digest), and enforces AES Kerberos with a 4-hour TGT lifetime. Accounts must support Kerberos-only auth before adding (test in a non-prod environment first)." `
+            -Reference 'https://attack.mitre.org/techniques/T1003/001/'))
+    }
+
+    # ADC-028: Privileged accounts with DONT_EXPIRE_PASSWORD
+    $neverExpirePriv = [System.Collections.Generic.List[string]]::new()
+    foreach ($grp in @('Domain Admins','Enterprise Admins','Schema Admins','Backup Operators','Account Operators')) {
+        foreach ($m in @($privGroups[$grp])) {
+            if ($m.samAccount -and $m.enabled -and ($m.uac -band 65536)) {   # 0x10000 = DONT_EXPIRE_PASSWORD
+                [void]$neverExpirePriv.Add("$($m.samAccount) [$grp]")
+            }
+        }
+    }
+    if ($neverExpirePriv.Count -gt 0) {
+        $preview = ($neverExpirePriv | Select-Object -First 8) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-028' -Severity 'Medium' `
+            -Technique 'T1098' `
+            -Description "$($neverExpirePriv.Count) privileged account(s) have DONT_EXPIRE_PASSWORD set: $preview. Non-expiring passwords on privileged accounts means a compromised credential remains valid indefinitely. Privileged accounts should have passwords rotated regularly (90 days or less) and ideally be Just-In-Time accounts that are disabled when not in use." `
+            -Reference 'https://attack.mitre.org/techniques/T1098/'))
+    }
+
+    # ADC-029: Disabled accounts in DA/EA/Schema Admin groups (ghost accounts)
+    $ghostPriv = [System.Collections.Generic.List[string]]::new()
+    foreach ($grp in @('Domain Admins','Enterprise Admins','Schema Admins')) {
+        foreach ($m in @($privGroups[$grp])) {
+            if ($m.samAccount -and -not $m.enabled) {
+                [void]$ghostPriv.Add("$($m.samAccount) [$grp]")
+            }
+        }
+    }
+    if ($ghostPriv.Count -gt 0) {
+        $preview = ($ghostPriv | Select-Object -First 8) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-029' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "$($ghostPriv.Count) DISABLED account(s) remain in privileged groups: $preview. Disabled accounts in DA/EA/Schema Admin retain all group memberships and ACL-derived rights. An attacker who re-enables a disabled privileged account (e.g., after compromising an admin with account-management rights) instantly gains full domain privilege without creating a new account. Remove disabled accounts from all privileged groups." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-030: Tombstone lifetime < 180 days
+    $tslDays = $domainInfo.tombstoneLifetimeDays
+    if ($tslDays -lt 180) {
+        $findings.Add((New-Finding -Id 'ADC-030' -Severity 'Medium' `
+            -Technique 'T1485' `
+            -Description "Active Directory tombstone lifetime is $tslDays days (recommended: 180+). Short tombstone lifetime means deleted objects are permanently unrecoverable sooner, limiting incident-response ability to reconstruct malicious AD changes after a security incident. Also reduces the viable backup window — backups older than the tombstone lifetime cannot be used for authoritative restore. Configure via CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,... tombstoneLifetime attribute." `
+            -Reference 'https://attack.mitre.org/techniques/T1485/'))
+    }
+
+    # ADC-031: Forest functional level < 2016
+    if ($forestInfo.functionalLevel -lt 7) {
+        $fflName = @{0='2000'; 1='2003'; 2='2003'; 3='2008'; 4='2008 R2'; 5='2012'; 6='2012 R2'; 7='2016'}[[int]$forestInfo.functionalLevel]
+        $findings.Add((New-Finding -Id 'ADC-031' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "Forest functional level is $($forestInfo.functionalLevel) ($fflName). Forest functional level 2016 (7) enables PAM trust (Privileged Access Management), selective authentication for forest trusts, and is a prerequisite for some Protected Users behaviors across inter-forest trust scenarios. Raise requires all domains in the forest to be at 2016 DFL first." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-032: Fine-Grained Password Policy too weak (applied to any object)
+    if ($fgppList.Count -gt 0) {
+        $weakFgpp = @($fgppList | Where-Object { $_.weakMinLen -or $_.weakLockout })
+        if ($weakFgpp.Count -gt 0) {
+            $names = ($weakFgpp | ForEach-Object { "$($_.cn)(minLen=$($_.minLength),lockout=$($_.lockout))" }) -join '; '
+            $findings.Add((New-Finding -Id 'ADC-032' -Severity 'Medium' `
+                -Technique 'T1110.001' `
+                -Description "$($weakFgpp.Count) Fine-Grained Password Policy/policies are weaker than baseline: $names. A PSO with minLength < 14 or lockout = 0 (disabled) applied to any group weakens password requirements below the domain minimum. Verify that PSOs applied to privileged groups enforce STRONGER (not weaker) policies. CN=Password Settings Container,CN=System,..." `
+                -Reference 'https://attack.mitre.org/techniques/T1110/001/'))
+        }
+    }
+
+    # ADC-033: Stale DC computer objects
+    if ($staleDCs.Count -gt 0) {
+        $preview = ($staleDCs | Select-Object -First 5 | ForEach-Object {
+            "$($_.cn)(last=$($_.lastLogon))"
+        }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-033' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "$($staleDCs.Count) DC computer object(s) have not authenticated in 90+ days: $preview. Stale DC objects may represent decommissioned DCs whose computer accounts were not cleaned up. An attacker who can reuse or control a stale DC computer account (e.g., via Kerberos S4U or RBCD) may be able to perform Kerberos ticket forgery against the replication service. Verify these DCs are truly decommissioned and remove computer objects from AD." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
     # ── Emit records ──────────────────────────────────────────────────────────
 
     # Domain record
@@ -1221,6 +1434,8 @@ function _ADCore_Collect {
                 secretsInAttrsCount          = $secretsInAttrs.Count
                 constrainedDelegationCount   = $constrainedDelegation.Count
                 gmsaCount                    = $gmsaRights.Count
+                fgppCount                    = $fgppList.Count
+                staleDCCount                 = $staleDCs.Count
             }
             dcSyncHolders    = $dcSyncHolders.ToArray()
         } `
@@ -1334,6 +1549,23 @@ function _ADCore_Collect {
             -RunId $runId))
     }
 
+    # Stale DC computer objects record
+    if ($staleDCs.Count -gt 0) {
+        $records.Add((New-ReconRecord `
+            -Collector      'AD-Core' `
+            -ObjectType     'stale-dcs' `
+            -StableId       "ADCore:stale-dcs:$domainFQDN" `
+            -Category       'config' `
+            -Tier           'T0' `
+            -CollectedAtPriv $false `
+            -Attributes     @{
+                domain   = $domainFQDN
+                staleDCs = $staleDCs.ToArray()
+                total    = $staleDCs.Count
+            } `
+            -RunId $runId))
+    }
+
     # UAC hygiene accounts (passwd-not-required, reversible encryption, sIDHistory)
     $uacHygieneData = @{
         domain               = $domainFQDN
@@ -1425,6 +1657,6 @@ function _ADCore_Collect {
 
 Register-Collector `
     -Name        'AD-Core' `
-    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, constrained/RBCD), shadow credentials, AdminSDHolder DACL, gMSA rights, LAPS read rights, account hygiene (sIDHistory, PASSWD_NOTREQD, reversible encryption, secrets-in-attrs), privileged groups, DCSync rights, password policy, trusts' `
+    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, constrained/RBCD), shadow credentials, AdminSDHolder DACL, gMSA rights, LAPS read rights, account hygiene (sIDHistory, PASSWD_NOTREQD, reversible encryption, secrets-in-attrs), privileged groups, DCSync rights, password policy, trusts, fine-grained PSOs, stale DCs, pre-Win2k group, anonymous LDAP, Protected Users gaps, ghost accounts, DONT_EXPIRE_PASSWORD, forest functional level, tombstone lifetime' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _ADCore_Collect @PSBoundParameters }

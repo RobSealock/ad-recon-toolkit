@@ -19,6 +19,8 @@
 #   GPO-008  Print Spooler not disabled on DCs via GPO
 #   GPO-009  Advanced Audit Policy not configured via GPO (missing SIEM telemetry)
 #   GPO-010  Group3r flagged issues (high/critical from external analysis)
+#   GPO-011  AppLocker or WDAC not configured for Domain Controllers
+#   GPO-012  Restricted Groups / Group Policy Preferences Groups not configured for Domain Admins membership
 
 # ── XML namespaces used in GPO reports ───────────────────────────────────────
 $script:_GPO_NS = @{ gp = 'http://www.microsoft.com/GroupPolicy/Settings' }
@@ -205,6 +207,62 @@ function _GPO_RunGroup3r {
 }
 
 # =============================================================================
+# GPO LINK HELPERS — identify GPOs linked to specific OUs
+# =============================================================================
+
+function _GPO_GetLinkedGPOs {
+    param([string]$OuDn)
+    # Returns GUIDs of GPOs linked to a specific DN object (OU or domain)
+    $guids = [System.Collections.Generic.List[string]]::new()
+    try {
+        $ou = [adsi]"LDAP://$OuDn"
+        $links = @($ou.Properties['gPLink'])
+        foreach ($linkStr in $links) {
+            if (-not $linkStr) { continue }
+            # gPLink format: [LDAP://cn={GUID},cn=policies,...;flags]...
+            $matches = [System.Text.RegularExpressions.Regex]::Matches($linkStr.ToString(), '\{([0-9A-Fa-f\-]+)\}')
+            foreach ($m in $matches) { [void]$guids.Add($m.Value) }
+        }
+    } catch { Write-Verbose "[GPO] GPO link read failed for $OuDn : $_" }
+    return $guids
+}
+
+function _GPO_CheckAppLockerWDAC {
+    param([string]$GpoGuid, [string]$DomainFQDN)
+    # Returns $true if the GPO contains an AppLocker or WDAC policy
+    try {
+        if (-not (Get-Command Get-GPOReport -ErrorAction SilentlyContinue)) { return $false }
+        [xml]$xml = Get-GPOReport -Guid $GpoGuid -ReportType Xml -Domain $DomainFQDN -ErrorAction Stop
+        # AppLocker: look for AppLockerPolicy element
+        $appLocker = $xml.SelectNodes('//*[local-name()="AppLockerPolicy"]')
+        if ($appLocker.Count -gt 0) { return $true }
+        # WDAC / Windows Defender Application Control: look for CodeIntegrity registry key
+        $wdacNodes = $xml.SelectNodes('//*[local-name()="Registry"][*[local-name()="Properties"][@key="HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard"]]')
+        if ($wdacNodes.Count -gt 0) { return $true }
+        # Also check for WDAC via SiPolicy binary reference
+        $siPolicy = $xml.SelectNodes('//*[local-name()="File"][contains(@name,"SiPolicy")]')
+        if ($siPolicy.Count -gt 0) { return $true }
+    } catch {}
+    return $false
+}
+
+function _GPO_CheckRestrictedGroups {
+    param([string]$GpoGuid, [string]$DomainFQDN)
+    # Returns $true if the GPO has a Restricted Groups or GPP Groups policy for Domain Admins
+    try {
+        if (-not (Get-Command Get-GPOReport -ErrorAction SilentlyContinue)) { return $false }
+        [xml]$xml = Get-GPOReport -Guid $GpoGuid -ReportType Xml -Domain $DomainFQDN -ErrorAction Stop
+        # Restricted Groups: RestrictedGroups element
+        $rg = $xml.SelectNodes('//*[local-name()="RestrictedGroup"]')
+        if ($rg.Count -gt 0) { return $true }
+        # GPP Groups: Group element under Preferences
+        $gppGroups = $xml.SelectNodes('//*[local-name()="Group"][@name]')
+        if ($gppGroups.Count -gt 0) { return $true }
+    } catch {}
+    return $false
+}
+
+# =============================================================================
 # MAIN COLLECTOR
 # =============================================================================
 
@@ -354,6 +412,45 @@ function _GPO_Collect {
             -Reference 'https://attack.mitre.org/techniques/T1484/001/'))
     }
 
+    # GPO-011: AppLocker or WDAC not configured for Domain Controllers
+    # Check GPOs linked to the Domain Controllers OU
+    if ($hasGPMC) {
+        $dcOuDn = "OU=Domain Controllers,$domainDn"
+        $dcLinkedGuids = _GPO_GetLinkedGPOs -OuDn $dcOuDn
+        # Also check domain-level links (policies linked to domain root apply to DCs)
+        $domainLinkedGuids = _GPO_GetLinkedGPOs -OuDn $domainDn
+        $allDcGuids = @($dcLinkedGuids) + @($domainLinkedGuids) | Select-Object -Unique
+
+        $hasAppLockerWDAC = $false
+        foreach ($guid in $allDcGuids) {
+            if (_GPO_CheckAppLockerWDAC -GpoGuid $guid -DomainFQDN $domainFQDN) {
+                $hasAppLockerWDAC = $true
+                break
+            }
+        }
+        if (-not $hasAppLockerWDAC) {
+            $findings.Add((New-Finding -Id 'GPO-011' -Severity 'Medium' `
+                -Technique 'T1059.001' `
+                -Description "No GPO linked to the Domain Controllers OU or domain root configures AppLocker or Windows Defender Application Control (WDAC). Without application control on DCs, an attacker with local admin rights can execute arbitrary binaries (Mimikatz, impacket tools, custom payloads) without restriction. AppLocker in Audit mode is insufficient — require Enforce mode. WDAC is preferred on Windows Server 2019+ for kernel-enforced policy. Reference: CIS Benchmark DC baseline includes AppLocker/WDAC as a hardening requirement." `
+                -Reference 'https://attack.mitre.org/techniques/T1059/001/'))
+        }
+
+        # GPO-012: Restricted Groups / GPP Groups not configured for Domain Admins
+        $hasRestrictedGroups = $false
+        foreach ($guid in $allDcGuids) {
+            if (_GPO_CheckRestrictedGroups -GpoGuid $guid -DomainFQDN $domainFQDN) {
+                $hasRestrictedGroups = $true
+                break
+            }
+        }
+        if (-not $hasRestrictedGroups) {
+            $findings.Add((New-Finding -Id 'GPO-012' -Severity 'Medium' `
+                -Technique 'T1098' `
+                -Description "No GPO linked to Domain Controllers or domain root configures Restricted Groups (Computer Configuration > Windows Settings > Security Settings > Restricted Groups) or GPP Groups for the Domain Admins group. Without a Restricted Groups policy, unauthorized additions to Domain Admins will not be automatically removed on next Group Policy application — a persistence mechanism for attackers who have added themselves. Configure Restricted Groups with the approved DA membership list." `
+                -Reference 'https://attack.mitre.org/techniques/T1098/'))
+        }
+    }
+
     # ── Emit records ──────────────────────────────────────────────────────────
 
     # GPO inventory record
@@ -431,6 +528,6 @@ function _GPO_Collect {
 
 Register-Collector `
     -Name        'GPO-Settings' `
-    -Description 'Enumerates GPOs via LDAP, scans SYSVOL for GPP credentials, parses security settings via Get-GPOReport (GPMC), optionally runs Group3r' `
+    -Description 'Enumerates GPOs via LDAP, scans SYSVOL for GPP credentials, parses security settings via Get-GPOReport (GPMC), checks AppLocker/WDAC on DC OU (GPO-011), Restricted Groups for DA (GPO-012), optionally runs Group3r' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _GPO_Collect @PSBoundParameters }

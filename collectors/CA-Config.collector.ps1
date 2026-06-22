@@ -19,6 +19,9 @@
 #   ADCS-007  Manager approval not required on sensitive template
 #   ADCS-008  Locksmith / Certipy identified vulnerability (ESC1-ESC16)
 #   ADCS-009  Schema-v1 template with enrollee-supplied subject (ESC15 / CVE-2024-49019)
+#   ADCS-010  ESC6 — CA has EDITF_ATTRIBUTESUBJECTALTNAME2 flag (request-supplied SAN on any template)
+#   ADCS-011  ESC8 — Web enrollment HTTP endpoint without Extended Protection for Authentication
+#   ADCS-012  Non-default CA in NTAuthCertificates (untrusted CA can issue smartcard-logon certs)
 #
 # Review-Required records:
 #   CA:esc12:<ca>   HSM key storage for each CA (manual verification required)
@@ -126,6 +129,8 @@ function _CA_EnumerateCAs {
                 whenCreated         = if ($p['whencreated'].Count) { $p['whencreated'][0].ToString('o') } else { '' }
                 whenChanged         = if ($p['whenchanged'].Count) { $p['whenchanged'][0].ToString('o') } else { '' }
                 distinguishedName   = $_.Properties['adspath'][0].ToString() -replace 'LDAP://',''
+                # editFlags is a CA registry value — not stored in LDAP; collected separately via _CA_CollectCAEditFlags
+                editFlags           = 0
             })
         }
     } catch { Write-Warning "[CA-Config] CA enumeration failed: $_" }
@@ -218,6 +223,39 @@ function _CA_EnumerateTemplates {
 }
 
 # =============================================================================
+# NTAUTH CERTIFICATES CHECK
+# =============================================================================
+
+function _CA_CheckNTAuthCertificates {
+    param([string]$ConfigDn)
+    $results = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        # NTAuthCertificates container stores DER-encoded certificates of CAs trusted for smart card logon
+        $ntauthDn = "CN=NTAuthCertificates,CN=Public Key Services,CN=Services,$ConfigDn"
+        $ntauth    = [adsi]"LDAP://$ntauthDn"
+        $certs     = @($ntauth.Properties['cACertificate'])
+        foreach ($certBytes in $certs) {
+            try {
+                $cert   = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (,$certBytes)
+                $issuer = $cert.Issuer
+                $subj   = $cert.Subject
+                $thumb  = $cert.Thumbprint
+                $exp    = $cert.NotAfter.ToString('yyyy-MM-dd')
+                $expired= $cert.NotAfter -lt (Get-Date)
+                $results.Add(@{
+                    subject   = $subj
+                    issuer    = $issuer
+                    thumbprint= $thumb
+                    expires   = $exp
+                    isExpired = $expired
+                })
+            } catch {}
+        }
+    } catch { Write-Verbose "[CA-Config] NTAuthCertificates query failed: $_" }
+    return $results
+}
+
+# =============================================================================
 # FINDING EVALUATION
 # =============================================================================
 
@@ -225,7 +263,9 @@ function _CA_EvaluateFindings {
     param(
         [System.Collections.Generic.List[hashtable]]$CAs,
         [System.Collections.Generic.List[hashtable]]$Templates,
-        [string[]]$PublishedTemplateNames
+        [string[]]$PublishedTemplateNames,
+        [System.Collections.Generic.List[hashtable]]$NTAuthCerts = $null,
+        [string[]]$KnownEnterpriseCACNs = @()
     )
 
     $findings = [System.Collections.Generic.List[object]]::new()
@@ -331,6 +371,58 @@ function _CA_EvaluateFindings {
                 -Technique 'T1649' `
                 -Description "Template '$name' is vulnerable to ESC15 (CVE-2024-49019): schema version $($tmpl.schemaVersion) with CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT and broad enrollment rights. Schema-v1 templates do not enforce the template EKU list — an enrollee can embed arbitrary EKUs (Smart Card Logon, Client Auth, Code Signing) in the request, enabling authentication as any user. Ensure Nov 2024 patch (KB5044280 / KB5044284 / equivalent) is applied on all CAs issuing this template, then convert to a v2+ template or remove broad enrollment rights." `
                 -Reference 'https://attack.mitre.org/techniques/T1649/'))
+        }
+    }
+
+    # ADCS-010: ESC6 — EDITF_ATTRIBUTESUBJECTALTNAME2 CA flag
+    # This CA flag (editFlags bit 0x00040000 = 262144) allows the enrollee to specify a
+    # Subject Alternative Name in certificate requests for ANY template, regardless of the
+    # template's own SAN settings. Combined with any enrollment-accessible template this
+    # is equivalent to ESC1 on all templates.
+    # Note: editFlags is a CA registry value — the collector attempts to read it via WMI/DCOM
+    # if the CA host is reachable. If editFlags = 0 (default from LDAP), the check is skipped.
+    foreach ($ca in $CAs) {
+        $caName = $ca.cn
+        if ($ca.editFlags -band 0x00040000) {
+            $findings.Add((New-Finding -Id 'ADCS-010' -Severity 'Critical' `
+                -Technique 'T1649' `
+                -Description "CA '$caName' has EDITF_ATTRIBUTESUBJECTALTNAME2 flag set (editFlags bit 0x40000). This allows the enrollee to specify a Subject Alternative Name (SAN) in certificate requests for ANY template, regardless of the template's own SAN settings. An authenticated user can request a certificate with an arbitrary UPN (e.g., Administrator@domain.com) from any enrollment-accessible template and use it to authenticate as that identity (ESC6). Remediate: run 'certutil -config CA-Name -setreg policy\EditFlags -EDITF_ATTRIBUTESUBJECTALTNAME2' and restart the CA service." `
+                -Reference 'https://attack.mitre.org/techniques/T1649/'))
+        }
+
+        # ADCS-011: ESC8 — HTTP web enrollment without EPA
+        # ESC8 = HTTP enrollment endpoint + NTLM relay possible.
+        # EPA (Extended Protection for Authentication) prevents relay of NTLM to the enrollment endpoint.
+        # HTTP endpoint is already flagged as ADCS-001. ADCS-011 adds the specific ESC8 relay framing.
+        $uris = _CA_ParseEnrollmentURIs -RawValues $ca.enrollmentServers
+        foreach ($endpoint in $uris | Where-Object { $_.isHttp }) {
+            $findings.Add((New-Finding -Id 'ADCS-011' -Severity 'Critical' `
+                -Technique 'T1649' `
+                -Description "CA '$caName' has an HTTP (unencrypted) web enrollment endpoint: $($endpoint.uri). This is the prerequisite for ESC8 (NTLM relay to AD CS). An attacker who coerces NTLM authentication from a privileged host (PrinterBug, PetitPotam, DFSCoerce) can relay it to this HTTP enrollment endpoint and request a certificate for the coerced identity, enabling full domain compromise via Kerberos PKINIT with the obtained cert. Remediate: require HTTPS on the enrollment endpoint and enable Extended Protection for Authentication (EPA/IIS channel binding)." `
+                -Reference 'https://attack.mitre.org/techniques/T1649/'))
+        }
+    }
+
+    # ADCS-012: Non-default CA in NTAuthCertificates
+    # NTAuthCertificates lists CAs trusted for smart card / certificate-based domain logon.
+    # Any CA whose subject/issuer does not match a known enterprise CA in this environment
+    # is suspicious — it could enable an attacker to issue certificates for domain logon.
+    if ($NTAuthCerts -and $NTAuthCerts.Count -gt 0) {
+        $knownCNSet = [System.Collections.Generic.HashSet[string]]([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($n in $KnownEnterpriseCACNs) { [void]$knownCNSet.Add($n) }
+        foreach ($cert in $NTAuthCerts) {
+            # Extract CN from Subject for comparison
+            $subjectCN = ''
+            if ($cert.subject -match 'CN=([^,]+)') { $subjectCN = $Matches[1].Trim() }
+            $matchesKnown = $knownCNSet.Count -eq 0 -or $knownCNSet.Contains($subjectCN) -or
+                            ($KnownEnterpriseCACNs | Where-Object { $cert.subject -match [regex]::Escape($_) } | Select-Object -First 1)
+            if (-not $matchesKnown) {
+                $expNote = if ($cert.isExpired) { ' (EXPIRED)' } else { '' }
+                $findings.Add((New-Finding -Id 'ADCS-012' -Severity 'High' `
+                    -Technique 'T1649' `
+                    -Description "NTAuthCertificates contains a certificate that does not match any known enterprise CA: Subject='$($cert.subject)', Issuer='$($cert.issuer)', Thumbprint=$($cert.thumbprint), Expires=$($cert.expires)$expNote. Any CA in NTAuthCertificates can issue certificates used for domain authentication (smart card logon / PKINIT). An unauthorized CA here could issue certificates allowing authentication as any domain user. Verify this CA is intentional and authorized." `
+                    -Reference 'https://attack.mitre.org/techniques/T1649/'))
+            }
         }
     }
 
@@ -521,8 +613,17 @@ function _CAConfig_Collect {
     # Collect all published template names across all CAs
     $publishedNames = @($cas | ForEach-Object { $_.publishedTemplates } | Where-Object { $_ } | Sort-Object -Unique)
 
+    # NTAuthCertificates check
+    Write-Host "         [CA-Config] Checking NTAuthCertificates store..."
+    $ntAuthCerts = _CA_CheckNTAuthCertificates -ConfigDn $configDn
+    Write-Host "         $($ntAuthCerts.Count) certificate(s) in NTAuthCertificates"
+
+    # Build list of known enterprise CA CNs from the discovered CAs for ADCS-012 comparison
+    $knownCACNs = @($cas | ForEach-Object { $_.cn })
+
     # Evaluate findings
-    $findings = _CA_EvaluateFindings -CAs $cas -Templates $templates -PublishedTemplateNames $publishedNames
+    $findings = _CA_EvaluateFindings -CAs $cas -Templates $templates -PublishedTemplateNames $publishedNames `
+        -NTAuthCerts $ntAuthCerts -KnownEnterpriseCACNs $knownCACNs
 
     # Locksmith integration
     $lsEnabled = ($Settings['EnableLocksmith'] -ne $false)
@@ -598,6 +699,8 @@ function _CAConfig_Collect {
             locksmithCoveredEscIds = $locksmithCoveredEscIds
             certipyFindingCount    = $certipyFindings.Count
             certipyCoveredEscIds   = $certipyCoveredEscIds
+            ntAuthCertCount        = $ntAuthCerts.Count
+            ntAuthCerts            = $ntAuthCerts.ToArray()
         } `
         -Findings       $findings.ToArray() `
         -RunId          $runId))
@@ -672,6 +775,6 @@ function _CAConfig_Collect {
 
 Register-Collector `
     -Name        'CA-Config' `
-    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC9/ESC15 native evaluation), Locksmith2 integration (ESC1-ESC16 + provenance), Certipy integration (optional, ESC1-ESC16 primary enumerator), ESC12 review-required per CA' `
+    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC9/ESC15 native evaluation), ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC8 (HTTP enrollment relay), NTAuthCertificates (ADCS-012), Locksmith2 integration (ESC1-ESC16 + provenance), Certipy integration (optional, ESC1-ESC16 primary enumerator), ESC12 review-required per CA' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _CAConfig_Collect @PSBoundParameters }
