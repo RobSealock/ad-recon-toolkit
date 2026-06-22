@@ -283,13 +283,13 @@
 
         @{
             Name       = 'HardeningKitty'
-            Description= 'Windows hardening baseline checker. Used by BestPractice-Baseline collector (optional). NOTE: not currently published on PSGallery — install manually from GitHub if required.'
+            Description= 'Windows hardening baseline checker (CIS/DISA/vendor benchmarks). Used by BestPractice-Baseline collector (optional). Sourced from GitHub — not on PSGallery. Vendored at tools\modules\HardeningKitty\0.9.3\.'
             Source     = 'GitHub'
-            MinVersion = '0.9.0'
+            MinVersion = '0.9.3'
             Required   = $false
             ToggleKey  = 'EnableHardeningKitty'
             # PSGallery: not available
-            # GitHub:    https://github.com/scipag/HardeningKitty (download and place in tools\modules\HardeningKitty\)
+            # GitHub:    https://github.com/scipag/HardeningKitty (v0.9.3 vendored in tools\modules\)
         }
     )
 
