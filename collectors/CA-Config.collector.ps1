@@ -406,15 +406,23 @@ function _CA_RunCertipy {
         $outFile = Join-Path $ArtDir 'certipy-output'  # certipy appends _Certipy.json
         $jsonFile = "$outFile`_Certipy.json"
 
-        # Build auth args — prefer Kerberos if no explicit creds provided
-        $authArgs = [System.Collections.Generic.List[string]]::new()
+        # Build auth args.
+        # Windows: impacket has no SSPI bridge, so -k -no-pass (Linux ccache) fails.
+        # Explicit credentials are required on Windows; -k -no-pass is only used on Linux.
         $certUser = $Settings['CertipyUsername']
         $certPass = $Settings['CertipyPassword']
+        $isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows)
+
+        $authArgs = [System.Collections.Generic.List[string]]::new()
         if ($certUser -and $certPass) {
             $authArgs.AddRange([string[]]@('-u', $certUser, '-p', $certPass))
-        } else {
-            # Kerberos via current session ticket — requires domain-joined host
+        } elseif (-not $isWindows) {
+            # Linux/macOS: use Kerberos ccache from current session (kinit must have run)
             $authArgs.AddRange([string[]]@('-k', '-no-pass'))
+        } else {
+            Write-Warning "[CA-Config] Certipy on Windows requires explicit credentials. Set CertipyUsername and CertipyPassword in config\settings.local.psd1 and re-run."
+            return $results
         }
 
         Write-Host "         [CA-Config] Running Certipy (find -vulnerable)..."
