@@ -11,6 +11,7 @@
     EnableGroup3r       = $true
     EnablePurpleKnight  = $true
     EnableHardeningKitty= $false   # optional — enable for BestPractice-Baseline collector
+    EnableCertipy       = $false   # optional — requires Python + pip install certipy-ad; set CertipyUsername/CertipyPassword in settings.local.psd1 or use Kerberos on domain-joined host
 
     # BloodHound CE
     # URI of the BloodHound CE API for upload (optional — leave empty to skip).

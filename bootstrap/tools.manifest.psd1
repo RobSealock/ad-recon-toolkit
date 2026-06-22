@@ -226,6 +226,45 @@
     )
 
     # =========================================================================
+    # PIP PACKAGES  —  Python packages installed via pip by Install-Prereqs.ps1
+    #
+    # After installation Install-Prereqs.ps1 locates the installed executable
+    # in the Python Scripts directory and copies it to tools\bin\ so the
+    # collector can find it without relying on PATH.
+    #
+    # Fields:
+    #   Name          Display name for log output.
+    #   PipName       Package name as published on PyPI (pip install <PipName>).
+    #   ExeName       Expected executable filename after install (e.g. certipy.exe).
+    #   MinVersion    Minimum acceptable version string.
+    #   TargetPath    Destination in tools\bin\ (relative to RepoRoot).
+    #   Optional      $true → soft-fail if pip unavailable or install fails.
+    #   ToggleKey     Key in settings.psd1 that enables/disables this tool.
+    # =========================================================================
+
+    PipPackages = @(
+
+        @{
+            Name        = 'Certipy'
+            Description = 'AD CS / ADCS vulnerability enumerator (ESC1-ESC16). Primary authoritative scanner for certificate template and CA misconfigurations. Used by CA-Config collector when EnableCertipy = $true in settings.'
+            PipName     = 'certipy-ad'
+            ExeName     = 'certipy.exe'
+            MinVersion  = '4.8.2'
+            TargetPath  = 'tools\bin\certipy.exe'
+            Optional    = $true
+            ToggleKey   = 'EnableCertipy'
+            Notes       = @(
+                'Requires Python 3.8+ and pip. On the run host:'
+                '  pip install certipy-ad'
+                'Or use Install-Prereqs.ps1 which will install and stage certipy.exe automatically.'
+                'Credentials: set CertipyUsername / CertipyPassword in config\settings.local.psd1,'
+                'or use Kerberos (-k -no-pass) on a domain-joined host (default).'
+                'Enable with: EnableCertipy = $true in config\settings.psd1 or settings.local.psd1.'
+            )
+        }
+    )
+
+    # =========================================================================
     # POWERSHELL MODULES  —  installed from PSGallery by Install-Prereqs.ps1
     # =========================================================================
 

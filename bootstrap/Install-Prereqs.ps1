@@ -113,6 +113,97 @@ foreach ($mod in $manifest.PSModules) {
     }
 }
 
+# ── 3b. Pip packages ──────────────────────────────────────────────────────────
+Write-Step 'Checking pip packages...'
+
+$pipPackages = @($manifest.PipPackages)
+if ($pipPackages.Count -gt 0) {
+    $pip = $null
+    foreach ($cmd in @('pip', 'pip3', 'python -m pip')) {
+        if (Get-Command ($cmd.Split(' ')[0]) -ErrorAction SilentlyContinue) { $pip = $cmd; break }
+    }
+
+    if (-not $pip) {
+        Write-Warn 'pip not found — Python 3.8+ with pip is required for pip packages.'
+        Write-Warn 'Install Python from https://www.python.org/downloads/ and re-run this script.'
+        foreach ($pkg in $pipPackages) {
+            if (-not $pkg.Optional) {
+                Write-Warn "Required pip package '$($pkg.Name)' will be skipped — collector will soft-fail."
+            }
+        }
+    } else {
+        foreach ($pkg in $pipPackages) {
+            $targetFull = Join-Path $RepoRoot $pkg.TargetPath
+
+            # If already staged and meets min version, skip
+            if (Test-Path $targetFull) {
+                Write-OK "$($pkg.Name) staged at $($pkg.TargetPath)"
+                continue
+            }
+
+            if ($OfflineOnly) {
+                if ($pkg.Optional) {
+                    Write-Warn "$($pkg.Name) not staged (offline mode, optional — skipping)"
+                } else {
+                    Write-Warn "$($pkg.Name) not staged (offline mode — pre-stage $($pkg.TargetPath))"
+                }
+                continue
+            }
+
+            Write-Step "Installing pip package: $($pkg.PipName) (min $($pkg.MinVersion))"
+            try {
+                $pipCmd = $pip.Split(' ')
+                if ($pipCmd.Count -gt 1) {
+                    & $pipCmd[0] $pipCmd[1..($pipCmd.Count-1)] install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet 2>&1
+                } else {
+                    & $pip install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet 2>&1
+                }
+
+                # Locate the installed exe in Python's Scripts directories
+                $candidates = @()
+                $pyCmd = (Get-Command 'python' -ErrorAction SilentlyContinue)?.Source
+                if ($pyCmd) {
+                    $pyDir = Split-Path $pyCmd
+                    $candidates += Join-Path $pyDir "Scripts\$($pkg.ExeName)"
+                    $candidates += Join-Path $pyDir $pkg.ExeName
+                }
+                # Common Windows user-install paths
+                $candidates += @(
+                    "$env:LOCALAPPDATA\Programs\Python\Python3*\Scripts\$($pkg.ExeName)",
+                    "$env:APPDATA\Python\Python3*\Scripts\$($pkg.ExeName)",
+                    "$env:USERPROFILE\AppData\Local\Programs\Python\Python3*\Scripts\$($pkg.ExeName)"
+                )
+
+                $found = $null
+                foreach ($c in $candidates) {
+                    $resolved = Resolve-Path $c -ErrorAction SilentlyContinue
+                    if ($resolved) { $found = $resolved.Path; break }
+                }
+
+                if ($found) {
+                    Copy-Item $found $targetFull -Force
+                    Write-OK "$($pkg.Name) installed and staged to $($pkg.TargetPath)"
+                } else {
+                    # Fall back: see if the command is now available on PATH
+                    $inPath = Get-Command ($pkg.ExeName -replace '\.exe$','') -ErrorAction SilentlyContinue
+                    if ($inPath) {
+                        Copy-Item $inPath.Source $targetFull -Force
+                        Write-OK "$($pkg.Name) installed (found via PATH) and staged to $($pkg.TargetPath)"
+                    } else {
+                        Write-Warn "$($pkg.Name) installed via pip but exe '$($pkg.ExeName)' not found — add Python Scripts to PATH and re-run, or copy manually to $($pkg.TargetPath)"
+                    }
+                }
+            } catch {
+                if ($pkg.Optional) {
+                    Write-Warn "$($pkg.Name) pip install failed (optional — skipping): $_"
+                } else {
+                    Write-Warn "$($pkg.Name) pip install failed (collector will soft-fail): $_"
+                }
+            }
+        }
+    }
+}
+
 # ── 4. Vendored binaries ──────────────────────────────────────────────────────
 Write-Step 'Checking vendored binaries...'
 $binDir = Join-Path $RepoRoot 'tools\bin'

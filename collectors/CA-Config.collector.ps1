@@ -383,16 +383,23 @@ function _CA_RunLocksmith {
 # =============================================================================
 
 function _CA_RunCertipy {
-    param([string]$ArtDir, [string]$RunId, [hashtable]$Settings)
+    param([string]$ArtDir, [string]$RunId, [hashtable]$Settings, [string]$RepoRoot)
     $results = [System.Collections.Generic.List[hashtable]]::new()
     try {
-        # Locate certipy binary
+        # Locate certipy binary — check tools\bin\ first (staged by Install-Prereqs.ps1),
+        # then fall back to PATH (certipy / certipy-ad installed globally via pip).
         $certipy = $null
-        foreach ($cmd in @('certipy', 'certipy-ad')) {
-            if (Get-Command $cmd -ErrorAction SilentlyContinue) { $certipy = $cmd; break }
+        if ($RepoRoot) {
+            $stagedPath = Join-Path $RepoRoot 'tools\bin\certipy.exe'
+            if (Test-Path $stagedPath) { $certipy = $stagedPath }
         }
         if (-not $certipy) {
-            Write-Verbose "[CA-Config] Certipy not found (certipy / certipy-ad); skipping."
+            foreach ($cmd in @('certipy', 'certipy-ad')) {
+                if (Get-Command $cmd -ErrorAction SilentlyContinue) { $certipy = $cmd; break }
+            }
+        }
+        if (-not $certipy) {
+            Write-Verbose "[CA-Config] Certipy not found in tools\bin\ or PATH (certipy / certipy-ad); skipping."
             return $results
         }
 
@@ -529,7 +536,7 @@ function _CAConfig_Collect {
 
     # Certipy integration (optional — requires certipy/certipy-ad binary + credentials)
     $certipyEnabled = ($Settings['EnableCertipy'] -eq $true)
-    $certipyFindings = if ($certipyEnabled) { _CA_RunCertipy -ArtDir $artDir -RunId $runId -Settings $Settings } else { @() }
+    $certipyFindings = if ($certipyEnabled) { _CA_RunCertipy -ArtDir $artDir -RunId $runId -Settings $Settings -RepoRoot $RunContext.RepoRoot } else { @() }
 
     # Certipy findings emit directly as ADCS-008 with [Certipy] prefix so they're
     # distinguishable from Locksmith entries while sharing the same finding ID namespace.
