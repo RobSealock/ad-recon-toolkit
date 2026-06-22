@@ -272,9 +272,9 @@
 
         @{
             Name       = 'Locksmith'
-            Description= 'AD CS / PKI vulnerability scanner (ESC1-ESC16). Used by Locksmith2 collector.'
+            Description= 'AD CS / PKI vulnerability scanner (ESC1-ESC16). Used by CA-Config collector.'
             Source     = 'PSGallery'
-            MinVersion = '2024.9.9'
+            MinVersion = '2026.1.4.1426'
             Required   = $true
             ToggleKey  = 'EnableLocksmith'
             # PSGallery: https://www.powershellgallery.com/packages/Locksmith
@@ -283,13 +283,13 @@
 
         @{
             Name       = 'HardeningKitty'
-            Description= 'Windows hardening baseline checker. Used by BestPractice-Baseline collector (optional).'
-            Source     = 'PSGallery'
+            Description= 'Windows hardening baseline checker. Used by BestPractice-Baseline collector (optional). NOTE: not currently published on PSGallery — install manually from GitHub if required.'
+            Source     = 'GitHub'
             MinVersion = '0.9.0'
             Required   = $false
             ToggleKey  = 'EnableHardeningKitty'
-            # PSGallery: https://www.powershellgallery.com/packages/HardeningKitty
-            # GitHub:    https://github.com/scipag/HardeningKitty
+            # PSGallery: not available
+            # GitHub:    https://github.com/scipag/HardeningKitty (download and place in tools\modules\HardeningKitty\)
         }
     )
 

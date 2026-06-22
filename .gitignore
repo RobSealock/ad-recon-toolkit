@@ -1,8 +1,7 @@
-# Vendored binaries and modules — fetched and staged at runtime by Install-Prereqs.ps1
+# Vendored binaries — fetched and staged at runtime by Install-Prereqs.ps1
 tools/bin/
 tools/kev/
-tools/modules/
-!tools/modules/.gitkeep
+# PS modules are committed directly (small, no build step required)
 
 # Raw run artifacts (large zips / XML)
 output/runs/*/artifacts/
