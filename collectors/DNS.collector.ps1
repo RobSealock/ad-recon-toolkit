@@ -127,7 +127,9 @@ function _DNS_CollectZoneWriteRights {
                            [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite  -bor
                            [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
 
-        function Test-WriteACE {
+        # Scriptblock (not nested function) so it closes over $writers/$tier0Patterns/$writeRightsMask
+        # without leaking into the enclosing script scope.
+        $checkDACL = {
             param([string]$Dn, [string]$Scope)
             try {
                 $obj = [adsi]"LDAP://$Dn"
@@ -140,12 +142,12 @@ function _DNS_CollectZoneWriteRights {
                     if (-not $isTier0 -and $sid) {
                         $name = try { $ace.IdentityReference.ToString() } catch { $sid }
                         [void]$writers.Add(@{
-                            dn         = $Dn
-                            scope      = $Scope
-                            sid        = $sid
-                            name       = $name
-                            rights     = $ace.ActiveDirectoryRights.ToString()
-                            inherited  = $ace.IsInherited
+                            dn        = $Dn
+                            scope     = $Scope
+                            sid       = $sid
+                            name      = $name
+                            rights    = $ace.ActiveDirectoryRights.ToString()
+                            inherited = $ace.IsInherited
                         })
                     }
                 }
@@ -155,7 +157,7 @@ function _DNS_CollectZoneWriteRights {
         # Check both AD-integrated DNS partitions' MicrosoftDNS containers
         foreach ($part in @('DomainDnsZones','ForestDnsZones')) {
             $containerDn = "CN=MicrosoftDNS,DC=$part,$DomainDn"
-            Test-WriteACE -Dn $containerDn -Scope "MicrosoftDNS-container ($part)"
+            & $checkDACL -Dn $containerDn -Scope "MicrosoftDNS-container ($part)"
 
             # Also check each zone object directly
             $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$containerDn")
@@ -164,9 +166,9 @@ function _DNS_CollectZoneWriteRights {
             $s.PageSize    = 100
             $s.PropertiesToLoad.Add('name') | Out-Null
             $s.FindAll() | ForEach-Object {
-                $zDn = $_.Path -replace '^LDAP://',''
+                $zDn   = $_.Path -replace '^LDAP://',''
                 $zName = if ($_.Properties['name'].Count) { $_.Properties['name'][0].ToString() } else { $zDn }
-                Test-WriteACE -Dn $zDn -Scope "zone:$zName"
+                & $checkDACL -Dn $zDn -Scope "zone:$zName"
             }
         }
     } catch { Write-Verbose "[DNS] Zone write-rights DACL walk failed: $_" }
