@@ -89,7 +89,7 @@ function _FW_PortsFromRule {
             }
         }
     }
-    return $ports
+    return ,$ports
 }
 
 # ── Main collector ────────────────────────────────────────────────────────────

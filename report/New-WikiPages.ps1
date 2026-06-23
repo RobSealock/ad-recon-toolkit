@@ -108,10 +108,10 @@ foreach ($r in $allRecords) {
     }
 }
 
-$critCount = ($allFindings | Where-Object Severity -eq 'Critical').Count
-$highCount = ($allFindings | Where-Object Severity -eq 'High').Count
-$medCount  = ($allFindings | Where-Object Severity -eq 'Medium').Count
-$lowCount  = ($allFindings | Where-Object Severity -eq 'Low').Count
+$critCount = @($allFindings | Where-Object Severity -eq 'Critical').Count
+$highCount = @($allFindings | Where-Object Severity -eq 'High').Count
+$medCount  = @($allFindings | Where-Object Severity -eq 'Medium').Count
+$lowCount  = @($allFindings | Where-Object Severity -eq 'Low').Count
 $domain    = if ($runManifest) { $runManifest.domain } else { 'unknown' }
 $runHost   = if ($runManifest) { $runManifest.runHost } else { 'unknown' }
 

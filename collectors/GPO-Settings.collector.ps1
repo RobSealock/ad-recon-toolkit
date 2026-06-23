@@ -61,7 +61,7 @@ function _GPO_EnumerateFromLDAP {
             })
         }
     } catch { Write-Warning "[GPO] LDAP enumeration failed: $_" }
-    return $gpos
+    return ,$gpos
 }
 
 # =============================================================================
@@ -99,7 +99,7 @@ function _GPO_ScanSysvolGPP {
             } catch { Write-Verbose "[GPO] SYSVOL scan error on $sysvolRoot\$file : $_" }
         }
     }
-    return $hits
+    return ,$hits
 }
 
 # =============================================================================
@@ -227,7 +227,7 @@ function _GPO_GetLinkedGPOs {
             foreach ($m in $matches) { [void]$guids.Add($m.Value) }
         }
     } catch { Write-Verbose "[GPO] GPO link read failed for $OuDn : $_" }
-    return $guids
+    return ,$guids
 }
 
 function _GPO_CheckAppLockerWDAC {
@@ -288,7 +288,7 @@ function _GPO_CheckGPOModificationRights {
             }
         } catch { Write-Verbose "[GPO] DACL check failed for ${guid}: $_" }
     }
-    return $issues
+    return ,$issues
 }
 
 function _GPO_CheckTier0LogonRestrictions {

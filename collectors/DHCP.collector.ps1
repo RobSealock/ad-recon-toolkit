@@ -28,7 +28,7 @@ function _DHCP_GetAuthorizedServers {
             }
         }
     } catch { Write-Verbose "[DHCP] Authorized server lookup failed: $_" }
-    return $servers
+    return ,$servers
 }
 
 # =============================================================================

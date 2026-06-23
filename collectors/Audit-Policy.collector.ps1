@@ -244,7 +244,7 @@ function _AUD_DiscoverDCs {
             if ($fqdn) { [void]$dcs.Add($fqdn) }
         }
     } catch { Write-Verbose "[Audit-Policy] DC discovery failed: $_" }
-    return $dcs
+    return ,$dcs
 }
 
 # =============================================================================
@@ -316,7 +316,7 @@ function _AUD_EvaluateFindings {
     )
 
     $findings = [System.Collections.Generic.List[object]]::new()
-    if ($DcResults.Count -eq 0) { return $findings }
+    if ($DcResults.Count -eq 0) { return ,$findings }
 
     # Helper: which DCs fail a given test
     function Get-FailingDCs {
@@ -529,7 +529,7 @@ function _AUD_EvaluateFindings {
             -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
     }
 
-    return $findings
+    return ,$findings
 }
 
 # =============================================================================

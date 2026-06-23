@@ -77,7 +77,7 @@ function _CA_ParseSecurityDescriptor {
     param([byte[]]$NtsdBytes)
     # Returns array of @{trustee; rights; aceType}
     $aces = [System.Collections.Generic.List[hashtable]]::new()
-    if (-not $NtsdBytes) { return $aces }
+    if (-not $NtsdBytes) { return ,$aces }
     try {
         $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($NtsdBytes, 0)
         foreach ($ace in $sd.DiscretionaryAcl) {
@@ -93,7 +93,7 @@ function _CA_ParseSecurityDescriptor {
             } catch {}
         }
     } catch {}
-    return $aces
+    return ,$aces
 }
 
 # =============================================================================
@@ -135,7 +135,7 @@ function _CA_EnumerateCAs {
             })
         }
     } catch { Write-Warning "[CA-Config] CA enumeration failed: $_" }
-    return $cas
+    return ,$cas
 }
 
 # =============================================================================
@@ -220,7 +220,7 @@ function _CA_EnumerateTemplates {
             })
         }
     } catch { Write-Warning "[CA-Config] Template enumeration failed: $_" }
-    return $templates
+    return ,$templates
 }
 
 # =============================================================================
@@ -233,7 +233,7 @@ function _CA_CollectCAEditFlags {
     # Registry path: HKLM\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\<CAName>\
     #                PolicyModules\CertificateAuthority_MicrosoftDefault.Policy\EditFlags
     # Returns $CAs with editFlags populated; on access failure, editFlags stays 0 (no false positives).
-    $HKLM       = [uint32]0x80000002
+    $HKLM       = [uint32]0x80000002L
     $policyKey  = 'SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\{0}\PolicyModules\CertificateAuthority_MicrosoftDefault.Policy'
     foreach ($ca in $CAs) {
         if (-not $ca.dnsHostName) { continue }
@@ -274,7 +274,7 @@ function _CA_CheckNTAuthCertificates {
             } catch {}
         }
     } catch { Write-Verbose "[CA-Config] NTAuthCertificates query failed: $_" }
-    return $results
+    return ,$results
 }
 
 # =============================================================================
@@ -294,7 +294,7 @@ function _CA_EvaluateFindings {
 
     # ADCS-001: HTTP web enrollment endpoints
     foreach ($ca in $CAs) {
-        $uris = _CA_ParseEnrollmentURIs -RawValues $ca.enrollmentServers
+        $uris = @(_CA_ParseEnrollmentURIs -RawValues $ca.enrollmentServers)
         foreach ($uri in $uris | Where-Object { $_.isHttp }) {
             $findings.Add((New-Finding -Id 'ADCS-001' -Severity 'Critical' `
                 -Technique 'T1649' `
@@ -416,7 +416,7 @@ function _CA_EvaluateFindings {
         # ESC8 = HTTP enrollment endpoint + NTLM relay possible.
         # EPA (Extended Protection for Authentication) prevents relay of NTLM to the enrollment endpoint.
         # HTTP endpoint is already flagged as ADCS-001. ADCS-011 adds the specific ESC8 relay framing.
-        $uris = _CA_ParseEnrollmentURIs -RawValues $ca.enrollmentServers
+        $uris = @(_CA_ParseEnrollmentURIs -RawValues $ca.enrollmentServers)
         foreach ($endpoint in $uris | Where-Object { $_.isHttp }) {
             $findings.Add((New-Finding -Id 'ADCS-011' -Severity 'Critical' `
                 -Technique 'T1649' `
@@ -448,7 +448,7 @@ function _CA_EvaluateFindings {
         }
     }
 
-    return $findings
+    return ,$findings
 }
 
 # =============================================================================
@@ -561,7 +561,7 @@ function _CA_RunCertipy {
         $extractFindings = {
             param($node, [string]$context)
             $nodeFindings = [System.Collections.Generic.List[hashtable]]::new()
-            if ($null -eq $node) { return $nodeFindings }
+            if ($null -eq $node) { return ,$nodeFindings }
             $vulnProp = $node.PSObject.Properties | Where-Object { $_.Name -match 'Vulnerabilit' } | Select-Object -First 1
             if ($vulnProp -and $vulnProp.Value) {
                 $vulnText = $vulnProp.Value | Out-String
@@ -573,7 +573,7 @@ function _CA_RunCertipy {
                     escIds         = [string[]]$escIds
                 })
             }
-            return $nodeFindings
+            return ,$nodeFindings
         }
 
         # Walk top-level CAs and nested Templates
@@ -650,7 +650,7 @@ function _CAConfig_Collect {
     # ADCS-013: DC Auth certificate template published but no DC computer objects enrolled
     Write-Host "         [CA-Config] Checking DC computer certificate enrollment..."
     $dcAuthTemplateNames = @('DomainController','Domain Controller','DomainControllerAuthentication','Domain Controller Authentication','KerberosAuthentication','Kerberos Authentication')
-    $dcAuthTemplatePublished = ($publishedNames | Where-Object { $dcAuthTemplateNames -contains $_ }).Count -gt 0
+    $dcAuthTemplatePublished = @($publishedNames | Where-Object { $dcAuthTemplateNames -contains $_ }).Count -gt 0
     $dcAuthFinding = $null
     if ($dcAuthTemplatePublished) {
         # Check if any DC computer object has a userCertificate attribute populated
@@ -676,7 +676,7 @@ function _CAConfig_Collect {
 
     # Locksmith integration
     $lsEnabled = ($Settings['EnableLocksmith'] -ne $false)
-    $locksmithFindings = if ($lsEnabled) { _CA_RunLocksmith -ArtDir $artDir -RunId $runId } else { @() }
+    $locksmithFindings = @(if ($lsEnabled) { _CA_RunLocksmith -ArtDir $artDir -RunId $runId } else { @() })
 
     # Derive Locksmith-covered ESC IDs for provenance record
     $lsEscIdSet = [System.Collections.Generic.HashSet[string]]::new()
@@ -696,7 +696,7 @@ function _CAConfig_Collect {
 
     # Certipy integration (optional — requires certipy/certipy-ad binary + credentials)
     $certipyEnabled = ($Settings['EnableCertipy'] -eq $true)
-    $certipyFindings = if ($certipyEnabled) { _CA_RunCertipy -ArtDir $artDir -RunId $runId -Settings $Settings -RepoRoot $RunContext.RepoRoot } else { @() }
+    $certipyFindings = @(if ($certipyEnabled) { _CA_RunCertipy -ArtDir $artDir -RunId $runId -Settings $Settings -RepoRoot $RunContext.RepoRoot } else { @() })
 
     # Certipy findings emit directly as ADCS-008 with [Certipy] prefix so they're
     # distinguishable from Locksmith entries while sharing the same finding ID namespace.

@@ -225,7 +225,7 @@ function _ADC_GetGroupMembers {
             } catch {}
         }
     } catch {}
-    return $members
+    return ,$members
 }
 
 # =============================================================================
@@ -429,7 +429,7 @@ function _ADC_CollectDCSyncRights {
             }
         }
     } catch { Write-Warning "[AD-Core] DCSync ACL read failed: $_" }
-    return $holders
+    return ,$holders
 }
 
 # =============================================================================
@@ -479,7 +479,7 @@ function _ADC_CollectConstrainedDelegation {
             })
         }
     } catch { Write-Verbose "[AD-Core] Constrained delegation query failed: $_" }
-    return $result
+    return ,$result
 }
 
 # =============================================================================
@@ -503,7 +503,7 @@ function _ADC_CollectShadowCredentials {
             })
         }
     } catch { Write-Verbose "[AD-Core] Shadow credentials query failed: $_" }
-    return $result
+    return ,$result
 }
 
 # =============================================================================
@@ -567,7 +567,7 @@ function _ADC_CollectSecretsInAttributes {
             }
         }
     } catch { Write-Verbose "[AD-Core] Secrets-in-attributes scan failed: $_" }
-    return $hits
+    return ,$hits
 }
 
 # =============================================================================
@@ -605,7 +605,7 @@ function _ADC_CollectGMSARights {
             })
         }
     } catch { Write-Verbose "[AD-Core] gMSA rights query failed: $_" }
-    return $result
+    return ,$result
 }
 
 # =============================================================================
@@ -738,7 +738,7 @@ function _ADC_CollectLAPSReadRights {
             } catch {}
         }
     } catch { Write-Verbose "[AD-Core] LAPS read rights query failed: $_" }
-    return $readers
+    return ,$readers
 }
 
 # =============================================================================
@@ -807,7 +807,7 @@ function _ADC_CollectFineGrainedPolicies {
             })
         }
     } catch { Write-Verbose "[AD-Core] Fine-grained password policy query failed: $_" }
-    return $results
+    return ,$results
 }
 
 function _ADC_CollectStaleDCs {
@@ -840,7 +840,7 @@ function _ADC_CollectStaleDCs {
             }
         }
     } catch { Write-Verbose "[AD-Core] Stale DC query failed: $_" }
-    return $staleDCs
+    return ,$staleDCs
 }
 
 # =============================================================================
@@ -894,7 +894,7 @@ function _ADC_CollectAltSecurityIdentities {
             }
         }
     } catch { Write-Verbose "[AD-Core] altSecurityIdentities query failed: $_" }
-    return $results
+    return ,$results
 }
 
 # =============================================================================
@@ -1007,7 +1007,7 @@ function _ADC_CollectRolePresence {
             -Reason 'A compromised WSUS server can deliver malicious updates to all managed Windows systems. Assess: WSUS server accounts, who can approve updates, whether SSL is required, and network isolation of the WSUS server.'
     }
 
-    return $roles
+    return ,$roles
 }
 
 # =============================================================================
@@ -1107,7 +1107,7 @@ function _ADC_CollectRODCPRP {
             if ($sensitive.Count -gt 0) { $issues.Add(@{ rodcCN=$cn; sensitiveGroupsInReveal=$sensitive }) }
         }
     } catch { Write-Verbose "[AD-Core] RODC PRP check failed: $_" }
-    return $issues
+    return ,$issues
 }
 
 function _ADC_CheckExchangeDACL {
@@ -1590,7 +1590,7 @@ function _ADCore_Collect {
     # ADC-038: Schema Admins non-empty (active members)
     $schemaAdminsActive = @($privGroups['Schema Admins'] | Where-Object { $_.enabled })
     if ($schemaAdminsActive.Count -gt 0) {
-        $names = ($schemaAdminsActive | Select-Object -First 5 | ForEach-Object { $_.name }) -join ', '
+        $names = ($schemaAdminsActive | Select-Object -First 5 | ForEach-Object { $_.samAccount }) -join ', '
         $findings.Add((New-Finding -Id 'ADC-038' -Severity 'High' `
             -Technique 'T1098' `
             -Description "Schema Admins has $($schemaAdminsActive.Count) active member(s): $names. Schema Admins should have zero permanent members — add accounts only during schema update operations (e.g., Exchange prep, LAPS extension), then remove immediately. Permanent Schema Admin membership allows unauthorized modification of AD attribute and class definitions, affecting every object in the forest." `

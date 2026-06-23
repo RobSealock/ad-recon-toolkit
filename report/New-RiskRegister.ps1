@@ -80,8 +80,9 @@ if (Test-Path $manifestPath) {
 Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
     Where-Object { $_.Name -notin @('run-manifest.json') } |
     ForEach-Object {
+        $currentFile = $_
         try {
-            $items = @(Get-Content $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+            $items = @(Get-Content $currentFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
             foreach ($r in $items) {
                 $recordCount++
                 $collector = if ($r.collector) { $r.collector } else { 'unknown' }
@@ -95,15 +96,17 @@ Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
                         $techNames = if ($mapping) { $mapping.TechniqueNames -join '; ' } else { '' }
                         $atomicTest= if ($mapping -and $mapping.AtomicTests.Count -gt 0) { $mapping.AtomicTests[0].Name } else { '—' }
                         $blastRadius = if ($mapping) { $mapping.BlastRadius } else { '—' }
+                        $severityValue = if ($f.severity) { $f.severity } else { 'Informational' }
+                        $tierValue     = if ($r.tier)      { $r.tier      } else { 'unclassified' }
 
                         $allFindings.Add(@{
                             Collector      = $collector
                             ObjectType     = if ($r.objectType) { $r.objectType } else { '' }
                             StableId       = if ($r.stableId)   { $r.stableId   } else { '' }
-                            Tier           = if ($r.tier)        { $r.tier       } else { 'unclassified' }
-                            Severity       = if ($f.severity)    { $f.severity   } else { 'Informational' }
-                            SeverityRank   = $severityOrder[(if ($f.severity) { $f.severity } else { 'Informational' })]
-                            TierRank       = $tierOrder[(if ($r.tier) { $r.tier } else { 'unclassified' })]
+                            Tier           = $tierValue
+                            Severity       = $severityValue
+                            SeverityRank   = $severityOrder[$severityValue]
+                            TierRank       = $tierOrder[$tierValue]
                             FindingId      = if ($f.id)          { $f.id         } else { '?' }
                             Technique      = if ($f.technique)   { $f.technique  } else { '—' }
                             TechniqueName  = $techNames
@@ -115,20 +118,20 @@ Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
                     }
                 }
             }
-        } catch { Write-Warning "[RiskRegister] Failed to parse $($_.Name): $_" }
+        } catch { Write-Warning "[RiskRegister] Failed to parse $($currentFile.Name): $_" }
     }
 
 $sorted = $allFindings | Sort-Object { $_.SeverityRank }, { $_.TierRank }, { $_.FindingId }
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
-$critCount = ($allFindings | Where-Object { $_.Severity -eq 'Critical'     }).Count
-$highCount = ($allFindings | Where-Object { $_.Severity -eq 'High'         }).Count
-$medCount  = ($allFindings | Where-Object { $_.Severity -eq 'Medium'       }).Count
-$lowCount  = ($allFindings | Where-Object { $_.Severity -eq 'Low'          }).Count
-$infoCount = ($allFindings | Where-Object { $_.Severity -eq 'Informational'}).Count
+$critCount = @($allFindings | Where-Object { $_.Severity -eq 'Critical'     }).Count
+$highCount = @($allFindings | Where-Object { $_.Severity -eq 'High'         }).Count
+$medCount  = @($allFindings | Where-Object { $_.Severity -eq 'Medium'       }).Count
+$lowCount  = @($allFindings | Where-Object { $_.Severity -eq 'Low'          }).Count
+$infoCount = @($allFindings | Where-Object { $_.Severity -eq 'Informational'}).Count
 
-$t0Count   = ($allFindings | Where-Object { $_.Tier -eq 'T0' }).Count
-$t1Count   = ($allFindings | Where-Object { $_.Tier -eq 'T1' }).Count
+$t0Count   = @($allFindings | Where-Object { $_.Tier -eq 'T0' }).Count
+$t1Count   = @($allFindings | Where-Object { $_.Tier -eq 'T1' }).Count
 
 # ── Build Markdown ────────────────────────────────────────────────────────────
 $sb = [System.Text.StringBuilder]::new()

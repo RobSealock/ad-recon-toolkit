@@ -148,7 +148,7 @@ function _HostOS_DiscoverTargets {
         } catch { Write-Verbose "[Host-OS] targets.psd1 load failed: $_" }
     }
 
-    return $targets
+    return ,$targets
 }
 
 # =============================================================================
@@ -826,7 +826,7 @@ function _HostOS_EvaluateFindings {
         }
     }
 
-    return $findings
+    return ,$findings
 }
 
 # =============================================================================

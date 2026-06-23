@@ -61,7 +61,7 @@ function _DNS_EnumerateZones {
             })
         }
     } catch { Write-Verbose "[DNS] Zone enumeration failed for $containerDn : $_" }
-    return $zones
+    return ,$zones
 }
 
 function _DNS_GetZoneNodes {
@@ -87,7 +87,7 @@ function _DNS_GetZoneNodes {
             }
         }
     } catch { Write-Verbose "[DNS] Node enumeration failed for $ZoneDn : $_" }
-    return $nodes
+    return ,$nodes
 }
 
 function _DNS_GetZoneDynamicUpdate {
@@ -176,7 +176,7 @@ function _DNS_CollectZoneWriteRights {
             }
         }
     } catch { Write-Verbose "[DNS] Zone write-rights DACL walk failed: $_" }
-    return $writers
+    return ,$writers
 }
 
 function _DNS_GetDnsAdmins {
@@ -191,7 +191,7 @@ function _DNS_GetDnsAdmins {
             foreach ($m in $result.Properties['member']) { $members.Add($m) }
         }
     } catch { Write-Verbose "[DNS] DnsAdmins lookup failed: $_" }
-    return $members
+    return ,$members
 }
 
 # ── Infrastructure zone names that are expected to have non-machine records ──
@@ -439,7 +439,7 @@ function _DNS_Collect {
                 totalOrphaned       = $allOrphaned.Count
                 moduleEnriched      = [bool](Get-Command Get-DnsServerResourceRecord -ErrorAction SilentlyContinue)
                 computerNamesLoaded = $computerNames.Count
-                adidnsWriters       = if ($zoneWriters.Count -gt 0) { $zoneWriters.ToArray() } else { @() }
+                adidnsWriters       = @(if ($zoneWriters.Count -gt 0) { $zoneWriters.ToArray() } else { @() })
             } `
             -Findings       $daFindings.ToArray() `
             -RunId          $runId))
