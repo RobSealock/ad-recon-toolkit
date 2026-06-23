@@ -57,6 +57,24 @@ Run `Install-Prereqs.ps1` to fetch and verify all binaries automatically (requir
 
 ---
 
+## Configuration switches
+
+All switches live in `config\settings.psd1`. Local overrides (API tokens, credentials, per-machine flags) go in `config\settings.local.psd1` — that file is git-ignored and never committed.
+
+| Switch | Default | Effect |
+|---|---|---|
+| `EnablePingCastle` | `$true` | Run PingCastle AD risk assessment; produces `pingcastle-*.xml` artifact |
+| `EnableSharpHound` | `$true` | Run SharpHound BloodHound ingestor; produces `bloodhound-*.zip` artifact |
+| `EnableLocksmith` | `$true` | Run Locksmith AD CS ESC1–ESC16 enumeration; findings feed into CA-Config collector |
+| `EnableGroup3r` | `$true` | Run Group3r GPO sensitive-data scanner; findings feed into GPO-Settings collector (GPO-010) |
+| `EnablePurpleKnight` | `$true` | Run Purple Knight assessment; raw export goes to `output\purpleknight\` (git-ignored) |
+| `EnableHardeningKitty` | `$false` | Run HardeningKitty CIS/DISA benchmark in audit mode; produces BestPractice-Baseline findings (BP-001–004) |
+| `EnableCertipy` | `$false` | Run Certipy AD CS scanner (requires Python + `pip install certipy-ad`); findings supplement Locksmith in CA-Config |
+
+`EnableCertipy` also requires `CertipyUsername` and `CertipyPassword` in `settings.local.psd1` (or a valid Kerberos ticket on a Linux/macOS run host). See the [Certipy section](#optional-certipy-ad-cs--esc1esc16) below.
+
+---
+
 ## Optional: Certipy (AD CS / ESC1–ESC16)
 
 Certipy is an optional Python-based AD CS enumerator. When enabled it runs alongside Locksmith and acts as the primary authoritative scanner for certificate template and CA misconfigurations (ESC1–ESC16).
