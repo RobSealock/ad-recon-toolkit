@@ -354,6 +354,67 @@ Some conditions cannot be assessed remotely or automatically. These are emitted 
 
 ---
 
-## Scope
+## Architecture
 
-See `SCOPE.md` for the full build brief and collector catalog.
+```
+Start-Assessment.ps1          ← entry point; loads config, resolves targets, runs collectors
+│
+├── config\
+│   ├── settings.psd1         ← global switches (Enable*, thresholds)
+│   └── settings.local.psd1   ← local overrides / credentials (git-ignored)
+│
+├── framework\
+│   ├── CollectorRegistry.ps1 ← registers and dispatches collectors
+│   ├── Repository.ps1        ← read/write normalized JSON records to output\runs\<RunId>\
+│   ├── RunContext.ps1        ← run ID, target list, privilege context
+│   └── Schema.ps1            ← finding and record schema helpers
+│
+├── collectors\               ← one file per domain; each implements Register-Collector
+│   ├── AD-Core.collector.ps1           ADC-* findings (LDAP, domain-wide)
+│   ├── Host-OS.collector.ps1           HOST-* findings (per-server, via WinRM)
+│   ├── CA-Config.collector.ps1         ADCS-* findings (AD CS, Locksmith, Certipy)
+│   ├── GPO-Settings.collector.ps1      GPO-* findings (SYSVOL, GPMC)
+│   ├── DNS.collector.ps1               DNS-* findings (DnsServer module)
+│   ├── Audit-Policy.collector.ps1      AUD-* findings (auditpol, registry, WinRM)
+│   ├── Host-Firewall.collector.ps1     FW-* findings (per-server, via WinRM)
+│   ├── DHCP.collector.ps1              DHCP-* findings (DhcpServer module)
+│   ├── BestPractice-Baseline.collector.ps1  BP-* findings (HardeningKitty, optional)
+│   ├── PingCastle.collector.ps1        wraps PingCastle binary, normalizes output
+│   ├── SharpHound.collector.ps1        wraps SharpHound binary, produces BloodHound zip
+│   ├── Locksmith2.collector.ps1        wraps Locksmith module, feeds CA-Config
+│   ├── PurpleKnight.collector.ps1      wraps Purple Knight, output to output\purpleknight\
+│   └── VulnCheck-Enrich.collector.ps1  optional KEV/CVE enrichment via VulnCheck API
+│
+├── mappings\
+│   └── finding-attack-atomic.psd1      MITRE ATT&CK + Atomic Red Team metadata per finding ID
+│
+├── report\
+│   ├── New-RiskRegister.ps1   generates Markdown risk register from run JSON
+│   ├── New-ValidationCards.ps1  generates per-finding remediation and validation cards
+│   └── New-WikiPages.ps1      generates wiki-ready Markdown pages per finding
+│
+├── diff\
+│   └── Compare-ReconRuns.ps1  config drift report between two run IDs
+│
+├── bootstrap\
+│   ├── Install-Prereqs.ps1    downloads and verifies all tool binaries
+│   └── tools.manifest.psd1   tool URLs, hashes, and target paths
+│
+└── output\                    (git-ignored)
+    ├── runs\<RunId>\          normalized JSON records + run manifest
+    ├── reports\               Markdown risk register
+    ├── diffs\                 drift reports between runs
+    └── purpleknight\          Purple Knight raw exports (sensitive — git-ignored)
+```
+
+### Data flow
+
+1. `Start-Assessment.ps1` loads settings, resolves target DCs and CA hosts, creates a `RunContext`.
+2. Each collector is invoked in order; it writes normalized finding and inventory records to `output\runs\<RunId>\` via `Repository.ps1`.
+3. External tools (PingCastle, SharpHound, Locksmith, Group3r, Purple Knight, Certipy, HardeningKitty) are run as sub-processes where enabled; their raw output is saved as artifacts and normalized findings are emitted into the same run directory.
+4. `New-RiskRegister.ps1` reads the run directory and produces a Markdown risk register sorted by severity.
+5. `Compare-ReconRuns.ps1` diffs two run directories to surface configuration drift.
+
+### Privilege model
+
+Collectors run in the current user context first. Where a finding requires elevation (e.g., reading protected registry keys via WinRM), the framework prompts to re-launch elevated — it does not store or auto-escalate credentials. The run host and the repo directory are treated as Tier 0; nothing is written to AD or any remote system.
