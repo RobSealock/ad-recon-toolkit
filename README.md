@@ -89,6 +89,23 @@ assess a domain from a host that isn't joined to it, set these in
 | `TargetUsername` | `''` | Alternate credential, e.g. `'CORP\svc-assess'` or `'user@corp.example.com'` |
 | `TargetPassword` | `''` | Plaintext — `settings.local.psd1` only |
 
+**Example** — add this to `config\settings.local.psd1` (git-ignored — never commit this file):
+
+```powershell
+@{
+    TargetDC       = 'dc01.corp.example.com'   # or an IP address
+    TargetDomain   = 'corp.example.com'
+    TargetUsername = 'CORP\svc-assess'         # or UPN: svc-assess@corp.example.com
+    TargetPassword = 'password'
+}
+```
+
+Then run the assessment exactly as normal — no extra flags needed:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\Start-Assessment.ps1
+```
+
 Cross-domain WinRM (used by the Host-OS and Audit-Policy collectors) can't use
 Kerberos without a trust relationship, so it falls back to NTLM — add the
 target DC to this machine's WinRM trusted hosts first:
