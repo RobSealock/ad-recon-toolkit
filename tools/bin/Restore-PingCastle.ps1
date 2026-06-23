@@ -8,10 +8,12 @@
     GitHub's 100 MB per-file limit.
 
     PingCastle.exe.zip was split into two binary parts (partaa/partab).
-    This script reassembles them into PingCastle.exe.zip, then extracts it.
+    This script reassembles them into PingCastle.exe.zip, extracts it, then
+    deletes the reassembled zip (a local intermediate byproduct, not tracked
+    in git — only the split parts are).
 
     PingCastleAutoUpdater.exe.zip (49 MB) is stored as a single zip and is
-    extracted directly.
+    extracted directly; it is tracked in git and is not deleted.
 
     Safe to re-run — skips any step where the target already exists and
     SHA256-matches.
@@ -35,34 +37,42 @@ $pcZip      = Join-Path $Dir 'PingCastle.exe.zip'
 $pcZipHash  = '4C3EB6D8748E94C4086E96E8D321E5737428CAF730FAD5B06CFAF9E6079D5640'
 $pcParts    = @('partaa','partab') | ForEach-Object { Join-Path $Dir "PingCastle.exe.zip.$_" }
 
-# Reassemble zip from parts if needed
-if (-not (Test-Path $pcZip) -or -not (Verify-Hash $pcZip $pcZipHash)) {
-    foreach ($p in $pcParts) {
-        if (-not (Test-Path $p)) {
-            Write-Error "Missing part: $p"
-            exit 1
-        }
+if (Test-Path $pcExe) {
+    Write-Host "[OK] PingCastle.exe already present."
+    # Cleanup: a prior run may have left the intermediate zip behind (e.g. if
+    # extraction succeeded but cleanup was interrupted). It's redundant now.
+    if (Test-Path $pcZip) {
+        Remove-Item $pcZip -Force
+        Write-Host "[OK] Removed intermediate PingCastle.exe.zip."
     }
-    Write-Host "Reassembling PingCastle.exe.zip from parts..."
-    $stream = [System.IO.File]::OpenWrite($pcZip)
-    try {
-        foreach ($p in $pcParts) {
-            $bytes = [System.IO.File]::ReadAllBytes($p)
-            $stream.Write($bytes, 0, $bytes.Length)
-        }
-    } finally { $stream.Close() }
-
-    if (-not (Verify-Hash $pcZip $pcZipHash)) {
-        Write-Error "SHA256 mismatch on reassembled PingCastle.exe.zip"
-        Remove-Item $pcZip -Force; exit 1
-    }
-    Write-Host "[OK] PingCastle.exe.zip reassembled and verified."
 } else {
-    Write-Host "[OK] PingCastle.exe.zip already present and verified."
-}
+    # Reassemble zip from parts if needed
+    if (-not (Test-Path $pcZip) -or -not (Verify-Hash $pcZip $pcZipHash)) {
+        foreach ($p in $pcParts) {
+            if (-not (Test-Path $p)) {
+                Write-Error "Missing part: $p"
+                exit 1
+            }
+        }
+        Write-Host "Reassembling PingCastle.exe.zip from parts..."
+        $stream = [System.IO.File]::OpenWrite($pcZip)
+        try {
+            foreach ($p in $pcParts) {
+                $bytes = [System.IO.File]::ReadAllBytes($p)
+                $stream.Write($bytes, 0, $bytes.Length)
+            }
+        } finally { $stream.Close() }
 
-# Extract PingCastle.exe from zip
-if (-not (Test-Path $pcExe)) {
+        if (-not (Verify-Hash $pcZip $pcZipHash)) {
+            Write-Error "SHA256 mismatch on reassembled PingCastle.exe.zip"
+            Remove-Item $pcZip -Force; exit 1
+        }
+        Write-Host "[OK] PingCastle.exe.zip reassembled and verified."
+    } else {
+        Write-Host "[OK] PingCastle.exe.zip already present and verified."
+    }
+
+    # Extract PingCastle.exe from zip
     Write-Host "Extracting PingCastle.exe..."
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip   = [System.IO.Compression.ZipFile]::OpenRead($pcZip)
@@ -71,8 +81,11 @@ if (-not (Test-Path $pcExe)) {
     [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $pcExe, $true)
     $zip.Dispose()
     Write-Host "[OK] PingCastle.exe extracted."
-} else {
-    Write-Host "[OK] PingCastle.exe already present."
+
+    # Cleanup: the reassembled zip is a local intermediate byproduct (not tracked
+    # in git — only the split parts are) and is redundant now that it's extracted.
+    Remove-Item $pcZip -Force
+    Write-Host "[OK] Removed intermediate PingCastle.exe.zip."
 }
 
 # ── PingCastleAutoUpdater.exe ─────────────────────────────────────────────────
