@@ -70,8 +70,11 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 | `EnablePurpleKnight` | `$true` | Run Purple Knight assessment; raw export goes to `output\purpleknight\` (git-ignored) |
 | `EnableHardeningKitty` | `$false` | Run HardeningKitty CIS/DISA benchmark in audit mode; produces BestPractice-Baseline findings (BP-001–004) |
 | `EnableCertipy` | `$false` | Run Certipy AD CS scanner (requires Python + `pip install certipy-ad`); findings supplement Locksmith in CA-Config |
+| `InstallRSATFeatures` | `$true` | Install RSAT (DnsServer/DhcpServer/GroupPolicy modules) during bootstrap. Set `$false` to skip — see note below |
 
 `EnableCertipy` also requires `CertipyUsername` and `CertipyPassword` in `settings.local.psd1` (or a valid Kerberos ticket on a Linux/macOS run host). See the [Certipy section](#optional-certipy-ad-cs--esc1esc16) below.
+
+On a Windows **client** OS (not Server), installing RSAT via `Add-WindowsCapability` can take 10–30+ minutes *per capability* the first time it runs on a given machine — a known Windows DISM behavior (it walks every locale variant in the component catalog regardless of which languages you have installed), not something specific to this toolkit. It's a one-time cost per machine: once installed, every later run just confirms it's present and moves on in a second or two. None of the collectors require it — DNS/DHCP/GPO-Settings soft-fail their RSAT-specific checks and still run everything else. If you'd rather not wait on a fresh machine, set `InstallRSATFeatures = $false` in `settings.local.psd1`.
 
 To scan hosts beyond the auto-discovered DCs/AD-role servers, set `TargetsFile = 'config\targets.psd1'` in `settings.psd1`/`settings.local.psd1`. Like `settings.local.psd1`, `config\targets.psd1` does not ship with the repo and is git-ignored — copy the template at `config\targets.sample.psd1` to `config\targets.psd1` and populate it.
 

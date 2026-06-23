@@ -54,15 +54,6 @@ Write-Host '║        ad-recon-toolkit  —  Blue-Team Assessment            �
 Write-Host '╚══════════════════════════════════════════════════════════════╝'
 Write-Host ''
 
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
-if (-not $SkipBootstrap) {
-    Write-Host '[Bootstrap] Verifying prerequisites...'
-    & (Join-Path $RepoRoot 'bootstrap\Install-Prereqs.ps1') -RepoRoot $RepoRoot
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-        Write-Warning '[Bootstrap] Prerequisites check reported errors. Review output above.'
-    }
-}
-
 # ── Config ────────────────────────────────────────────────────────────────────
 $settingsPath      = Join-Path $RepoRoot 'config\settings.psd1'
 $settingsLocalPath = Join-Path $RepoRoot 'config\settings.local.psd1'
@@ -70,6 +61,15 @@ $settings = if (Test-Path $settingsPath) { Import-PowerShellDataFile $settingsPa
 if (Test-Path $settingsLocalPath) {
     $local = Import-PowerShellDataFile $settingsLocalPath
     foreach ($k in $local.Keys) { $settings[$k] = $local[$k] }
+}
+
+# ── Bootstrap ─────────────────────────────────────────────────────────────────
+if (-not $SkipBootstrap) {
+    Write-Host '[Bootstrap] Verifying prerequisites...'
+    & (Join-Path $RepoRoot 'bootstrap\Install-Prereqs.ps1') -RepoRoot $RepoRoot -SkipRSAT:($settings['InstallRSATFeatures'] -eq $false)
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        Write-Warning '[Bootstrap] Prerequisites check reported errors. Review output above.'
+    }
 }
 
 # ── Load framework ────────────────────────────────────────────────────────────

@@ -41,6 +41,15 @@
     # Set to $true to skip all downloads (binaries and KEV must be pre-staged).
     OfflineMode         = $false
 
+    # RSAT features (DnsServer/DhcpServer/GroupPolicy modules)
+    # On a Windows client OS (not Server), installing these via Add-WindowsCapability
+    # can take 10-30+ minutes PER capability on first run on a given machine — a known
+    # Windows DISM behavior, not specific to this toolkit. Not required: DNS/DHCP/
+    # GPO-Settings collectors soft-fail their RSAT-specific checks and still run the
+    # rest of their checks without it. Set to $false to skip the install attempt
+    # entirely (e.g. on a fresh machine where you don't want to wait).
+    InstallRSATFeatures = $true
+
     # Remote / cross-domain assessment
     # Run from a host that is NOT joined to the target domain by pointing
     # directly at a DC and supplying alternate credentials. Leave TargetDC

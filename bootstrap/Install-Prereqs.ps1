@@ -19,7 +19,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$RepoRoot,
-    [switch]$OfflineOnly
+    [switch]$OfflineOnly,
+    [switch]$SkipRSAT
 )
 
 $ErrorActionPreference = 'Continue'
@@ -40,6 +41,9 @@ Write-OK "PowerShell $($PSVersionTable.PSVersion)"
 
 # ── 2. RSAT features ──────────────────────────────────────────────────────────
 Write-Step 'Checking RSAT features...'
+if ($SkipRSAT) {
+    Write-Warn 'RSAT feature check skipped (InstallRSATFeatures = $false). DNS/DHCP/GPO-Settings collectors will soft-fail their RSAT-specific checks but otherwise run normally.'
+} else {
 $isServer = (Get-CimInstance Win32_OperatingSystem).ProductType -ne 1
 
 if ($isServer) {
@@ -65,7 +69,7 @@ if ($isServer) {
         if ($state -eq 'Installed') {
             Write-OK "Capability installed: $cap"
         } elseif (-not $OfflineOnly) {
-            Write-Step "Installing capability: $cap"
+            Write-Step "Installing capability: $cap (first-time install can take 10-30+ min per capability -- known Windows DISM behavior on client OS, not a toolkit issue; set InstallRSATFeatures = `$false in settings.local.psd1 to skip)"
             try {
                 Add-WindowsCapability -Online -Name $cap -ErrorAction Stop | Out-Null
                 Write-OK "Installed: $cap"
@@ -76,6 +80,7 @@ if ($isServer) {
             Write-Warn "Not installed (offline mode): $cap"
         }
     }
+}
 }
 
 # ── 3. PowerShell modules ─────────────────────────────────────────────────────
