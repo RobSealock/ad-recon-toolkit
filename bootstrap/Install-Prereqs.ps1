@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Verifies and installs prerequisites for ad-recon-toolkit.
 
@@ -229,7 +229,9 @@ if ($pipPackages.Count -gt 0) {
 # ── 3c. Split-part reassembly ─────────────────────────────────────────────────
 # PingCastle.exe, PingCastleAutoUpdater.exe, and PurpleKnight.exe all exceed
 # GitHub's 100 MB per-file limit and are stored as split parts or zipped.
-# Auto-reassemble on first bootstrap run.
+# Auto-reassemble on first bootstrap run, then clean up the local intermediate
+# zip byproduct. Subsequent runs bypass reassembly entirely once the target
+# exe is present.
 Write-Step 'Checking split-part reassembly...'
 
 $pcRestoreScript = Join-Path $RepoRoot 'tools\bin\Restore-PingCastle.ps1'

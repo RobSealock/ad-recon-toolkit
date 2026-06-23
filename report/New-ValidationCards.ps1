@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Generates change-management-ready validation cards for each finding.
 

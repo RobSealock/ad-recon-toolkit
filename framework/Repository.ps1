@@ -1,4 +1,4 @@
-# JSON-per-run storage: initialize paths, save records, write manifest, update index.
+﻿# JSON-per-run storage: initialize paths, save records, write manifest, update index.
 
 function Initialize-RunRepository {
     [CmdletBinding()]
@@ -27,9 +27,9 @@ function Save-ReconRecord {
     # One file per (collector, objectType) pair — append to JSON array.
     $fileName = "$($Record.collector).$($Record.objectType).json"
     $filePath  = Join-Path $RunRoot $fileName
-    $existing  = if (Test-Path $filePath) {
-        @(Get-Content $filePath -Raw -Encoding UTF8 | ConvertFrom-Json)
-    } else { @() }
+    $existing  = @(if (Test-Path $filePath) {
+        Get-Content $filePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else { @() })
     ($existing + $Record) | ConvertTo-Json -Depth 20 -Compress | Set-Content $filePath -Encoding UTF8
 }
 
@@ -61,9 +61,9 @@ function Update-RunIndex {
         [Parameter(Mandatory)][string]$RunRoot
     )
     $indexPath = Join-Path $RepoRoot 'output\run-index.json'
-    $index = if (Test-Path $indexPath) {
-        @(Get-Content $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-    } else { @() }
+    $index = @(if (Test-Path $indexPath) {
+        Get-Content $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else { @() })
     ($index + [PSCustomObject]@{
         runId   = $RunId
         runRoot = $RunRoot

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Generates a structured set of Markdown wiki pages from a completed run.
 

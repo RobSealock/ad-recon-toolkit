@@ -1,4 +1,4 @@
-# VulnCheck-Enrich collector — correlates software versions from Host-OS records
+﻿# VulnCheck-Enrich collector — correlates software versions from Host-OS records
 # against the CISA KEV dataset (or VulnCheck API) for known-exploited CVEs.
 # MinPrivilege: AnyAuthUser (reads local KEV JSON file; no network auth required for CISA KEV).
 # Depends on: Host-OS collector records (runs after Host-OS in a later milestone).

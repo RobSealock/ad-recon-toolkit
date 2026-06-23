@@ -1,4 +1,4 @@
-# PingCastle collector — ingests PingCastle XML report and normalizes findings.
+﻿# PingCastle collector — ingests PingCastle XML report and normalizes findings.
 # MinPrivilege: T0 (PingCastle requires domain-level read access; run elevated).
 # Binary: tools\bin\PingCastle.exe  (fetched by Install-Prereqs.ps1)
 

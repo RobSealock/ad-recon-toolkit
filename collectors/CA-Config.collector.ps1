@@ -1,4 +1,4 @@
-# CA-Config collector — enumerates AD Certificate Services configuration.
+﻿# CA-Config collector — enumerates AD Certificate Services configuration.
 # MinPrivilege: AnyAuthUser (LDAP read of PKI containers is world-readable).
 #
 # Coverage (Section 6 of scope — AD CS):
@@ -129,7 +129,7 @@ function _CA_EnumerateCAs {
                 publishedTemplates  = $templates
                 whenCreated         = if ($p['whencreated'].Count) { $p['whencreated'][0].ToString('o') } else { '' }
                 whenChanged         = if ($p['whenchanged'].Count) { $p['whenchanged'][0].ToString('o') } else { '' }
-                distinguishedName   = $_.Properties['adspath'][0].ToString() -replace 'LDAP://',''
+                distinguishedName   = ($_.Properties['adspath'][0].ToString() -replace 'LDAP://','')
                 # editFlags is a CA registry value — populated by _CA_CollectCAEditFlags after enumeration
                 editFlags           = 0
             })
@@ -715,6 +715,7 @@ function _CAConfig_Collect {
     # per CA so the post-run pass knows to inspect each CA's key storage provider.
     foreach ($ca in $cas) {
         $records.Add((New-ReviewRequired `
+            -Collector 'CA-Config' `
             -Id     "CA:esc12:$($ca.cn):$domainFQDN" `
             -Topic  "ESC12 — CA '$($ca.cn)' key storage provider (HSM/software)" `
             -Reason "ESC12 requires confirming that this CA's private key is protected by a Hardware Security Module (HSM). If the key resides in a software KSP, an attacker with CA admin rights can extract it and forge certificates for any identity. Verify via certsrv or certutil -getreg CA\CSP\ProviderName on the CA server." `

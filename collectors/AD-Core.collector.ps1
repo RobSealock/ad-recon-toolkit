@@ -1,4 +1,4 @@
-# AD-Core collector — forest/domain, accounts, groups, Kerberos, delegation, ACLs.
+﻿# AD-Core collector — forest/domain, accounts, groups, Kerberos, delegation, ACLs.
 # MinPrivilege: AnyAuthUser (uses raw LDAP via System.DirectoryServices — no AD module required).
 #
 # Collects:
@@ -141,15 +141,18 @@ function _ADC_CollectDomainInfo {
         # PDC
         $pdc = try { ($d.fsmoroleowner) } catch { '' }
 
+        $dnsRoot     = try { $p['dNSRoot'][0].ToString() } catch { '' }
+        $pdcEmulator = try { $RootDse.dnsHostName.ToString() } catch { '' }
+
         return @{
             distinguishedName     = $DomainDn
-            dnsRoot               = try { $p['dNSRoot'][0].ToString() } catch { '' }
+            dnsRoot               = $dnsRoot
             functionalLevel       = $fl
             machineAccountQuota   = $maq
             dsHeuristics          = $dsh
             tombstoneLifetimeDays = $tsl
             recycleBinEnabled     = $recycleEnabled
-            pdcEmulator           = try { $RootDse.dnsHostName.ToString() } catch { '' }
+            pdcEmulator           = $pdcEmulator
             error                 = $null
         }
     } catch {
@@ -1861,6 +1864,7 @@ function _ADCore_Collect {
     $rolePresence = _ADC_CollectRolePresence -DomainDn $domainDn -ConfigDn $configDn
     foreach ($role in $rolePresence) {
         $records.Add((New-ReviewRequired `
+            -Collector 'AD-Core' `
             -Id     "ADCore:role:$($role.name):$domainFQDN" `
             -Topic  "$($role.name) detected in $($role.category) scope" `
             -Reason $role.reason `

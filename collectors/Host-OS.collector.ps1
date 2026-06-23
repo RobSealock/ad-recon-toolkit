@@ -1,4 +1,4 @@
-# Host-OS collector — per-server OS posture for DCs and AD-role servers.
+﻿# Host-OS collector — per-server OS posture for DCs and AD-role servers.
 # MinPrivilege: LocalAdmin
 #
 # Target discovery (automatic):
@@ -806,7 +806,7 @@ function _HostOS_EvaluateFindings {
             if (-not $sf.netlogonSealSecureChannel)  { $missing += 'SealSecureChannel=0'  }
             $findings.Add((New-Finding -Id 'HOST-031' -Severity 'High' `
                 -Technique 'T1557' `
-                -Description "Netlogon secure channel signing/sealing is NOT fully enforced on DC $host: $($missing -join ', '). Both RequireSignOrSeal=1 and SealSecureChannel=1 must be set to cryptographically protect all Netlogon RPC traffic and prevent downgrade attacks. Enforce via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > 'Domain member: Digitally encrypt or sign secure channel data (always)' and 'Domain member: Digitally sign secure channel data (when possible)'." `
+                -Description "Netlogon secure channel signing/sealing is NOT fully enforced on DC ${host}: $($missing -join ', '). Both RequireSignOrSeal=1 and SealSecureChannel=1 must be set to cryptographically protect all Netlogon RPC traffic and prevent downgrade attacks. Enforce via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > 'Domain member: Digitally encrypt or sign secure channel data (always)' and 'Domain member: Digitally sign secure channel data (when possible)'." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/'))
         }
 

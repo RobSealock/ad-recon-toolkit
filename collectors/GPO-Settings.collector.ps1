@@ -1,4 +1,4 @@
-# GPO-Settings collector — enumerates Group Policy Objects and checks for
+﻿# GPO-Settings collector — enumerates Group Policy Objects and checks for
 # dangerous configurations, credential exposure, and missing hardening.
 # MinPrivilege: AnyAuthUser (SYSVOL + LDAP); enriched by GPMC (no extra priv).
 #
@@ -90,7 +90,7 @@ function _GPO_ScanSysvolGPP {
                         $userName = if ($content -match 'userName="([^"]+)"') { $Matches[1] } else { 'unknown' }
                         $hits.Add(@{
                             file     = $_.FullName
-                            gpoGuid  = ($_.FullName -split [regex]::Escape('\Policies\'))[1] -replace '\\.*',''
+                            gpoGuid  = (($_.FullName -split [regex]::Escape('\Policies\'))[1] -replace '\\.*','')
                             gppFile  = $file
                             userName = $userName
                         })
@@ -286,7 +286,7 @@ function _GPO_CheckGPOModificationRights {
                 foreach ($p in $safePatterns) { if ($trustee -imatch [regex]::Escape($p)) { $isSafe = $true; break } }
                 if (-not $isSafe) { $issues.Add(@{ gpoGuid=$guid; trustee=$trustee; rights=$ace.ActiveDirectoryRights.ToString() }) }
             }
-        } catch { Write-Verbose "[GPO] DACL check failed for $guid: $_" }
+        } catch { Write-Verbose "[GPO] DACL check failed for ${guid}: $_" }
     }
     return $issues
 }
@@ -300,7 +300,7 @@ function _GPO_CheckTier0LogonRestrictions {
             $denyNodes = $xml.SelectNodes(
                 '//*[local-name()="UserRightsAssignment"][*[local-name()="Name" and (text()="SeDenyInteractiveLogonRight" or text()="SeDenyRemoteInteractiveLogonRight" or text()="SeDenyNetworkLogonRight")]]')
             if ($denyNodes.Count -gt 0) { return $true }
-        } catch { Write-Verbose "[GPO] Logon restriction check failed for $guid: $_" }
+        } catch { Write-Verbose "[GPO] Logon restriction check failed for ${guid}: $_" }
     }
     return $false
 }

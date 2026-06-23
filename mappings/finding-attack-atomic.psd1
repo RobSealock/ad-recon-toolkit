@@ -1,4 +1,4 @@
-# Finding ID → MITRE ATT&CK technique(s) → Atomic Red Team test reference.
+﻿# Finding ID → MITRE ATT&CK technique(s) → Atomic Red Team test reference.
 # Used by New-ValidationCards.ps1 to generate non-destructive validation cards.
 #
 # All Atomic test references must be non-destructive variants only.

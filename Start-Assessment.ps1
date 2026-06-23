@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Self-bootstrapping interactive entry point for ad-recon-toolkit.
 

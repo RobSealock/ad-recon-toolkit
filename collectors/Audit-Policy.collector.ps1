@@ -1,4 +1,4 @@
-# Audit Policy and Detection Coverage collector.
+﻿# Audit Policy and Detection Coverage collector.
 # MinPrivilege: LocalAdmin (WinRM to each Domain Controller)
 #
 # Collects audit policy via `auditpol /get /subcategory:* /r` (CSV, GUID-keyed,
@@ -267,7 +267,7 @@ function _AUD_CollectFromDC {
         }
         return $data
     } catch {
-        Write-Warning "[Audit-Policy] WinRM failed for $FQDN: $_"
+        Write-Warning "[Audit-Policy] WinRM failed for ${FQDN}: $_"
         return $null
     }
 }

@@ -1,4 +1,4 @@
-# Host-Firewall collector — Windows Defender Firewall profiles, default actions,
+﻿# Host-Firewall collector — Windows Defender Firewall profiles, default actions,
 # logging config, key inbound rules on sensitive ports, policy source (GPO vs local).
 #
 # MinPrivilege: LocalAdmin

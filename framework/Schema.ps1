@@ -1,4 +1,4 @@
-# Record and finding factory functions used by every collector.
+﻿# Record and finding factory functions used by every collector.
 # All output normalization flows through these — do not bypass them.
 
 function New-ReconRecord {
@@ -51,6 +51,7 @@ function New-Finding {
 function New-ReviewRequired {
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory)][string]$Collector,
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][string]$Topic,
         [Parameter(Mandatory)][string]$Reason,
@@ -58,6 +59,8 @@ function New-ReviewRequired {
     )
     [PSCustomObject]@{
         recordType = 'review-required'
+        collector  = $Collector
+        objectType = 'review-required'
         id         = $Id
         topic      = $Topic
         reason     = $Reason
@@ -77,6 +80,7 @@ function New-CollectionError {
     [PSCustomObject]@{
         recordType   = 'collection-error'
         collector    = $Collector
+        objectType   = 'collection-error'
         target       = $Target
         errorMessage = $ErrorMessage
         runId        = $RunId

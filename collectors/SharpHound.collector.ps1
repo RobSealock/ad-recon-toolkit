@@ -1,4 +1,4 @@
-# SharpHound collector — BloodHound CE data collection (attack-path graph).
+﻿# SharpHound collector — BloodHound CE data collection (attack-path graph).
 # MinPrivilege: T0 (needs domain user at minimum; T0 held = run elevated).
 # Binary: tools\bin\SharpHound.exe  (fetched by Install-Prereqs.ps1)
 

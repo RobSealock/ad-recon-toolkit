@@ -1,4 +1,4 @@
-# BestPractice-Baseline collector — HardeningKitty integration.
+﻿# BestPractice-Baseline collector — HardeningKitty integration.
 # MinPrivilege: LocalAdmin (HardeningKitty requires local admin for registry/policy reads).
 #
 # Disabled by default (EnableHardeningKitty = $false in settings.psd1).

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Generates a comprehensive Markdown risk register from a completed run's JSON records.
 
@@ -138,7 +138,7 @@ function Add { param([string]$line = '') $sb.AppendLine($line) | Out-Null }
 # Header
 Add "# AD Blue-Team Risk Register"
 Add ""
-Add "> **Assessment Run:** \`$runId\`"
+Add "> **Assessment Run:** ``$runId``"
 if ($runManifest) {
     Add "> **Domain:** $($runManifest.domain)"
     Add "> **Run Host:** $($runManifest.runHost)"
@@ -164,7 +164,7 @@ Add "| Tier-0 Findings | $t0Count |"
 Add "| Tier-1 Findings | $t1Count |"
 Add "| Records Collected | $recordCount |"
 Add "| Collection Errors | $errorCount |"
-Add "| Collectors Active | $($collectorSet.Count) ($($collectorSet | Sort-Object | Select-Object -join ', ')) |"
+Add "| Collectors Active | $($collectorSet.Count) ($(($collectorSet | Sort-Object) -join ', ')) |"
 Add ""
 
 if ($critCount -gt 0 -or $highCount -gt 0) {

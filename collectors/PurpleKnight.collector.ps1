@@ -1,4 +1,4 @@
-# PurpleKnight collector — ingests an exported PurpleKnight HTML or CSV report.
+﻿# PurpleKnight collector — ingests an exported PurpleKnight HTML or CSV report.
 # MinPrivilege: AnyAuthUser (ingestion only — PurpleKnight itself is GUI-driven).
 # PurpleKnight is GUI-only; this collector does NOT execute it.
 # Set PurpleKnightExport in settings.psd1 to point at the exported file.

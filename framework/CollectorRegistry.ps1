@@ -1,4 +1,4 @@
-# Collector self-registration and privilege gating.
+﻿# Collector self-registration and privilege gating.
 # Dot-source this file once before loading collector files.
 
 $script:_CollectorRegistry = [System.Collections.Generic.List[hashtable]]::new()
@@ -38,7 +38,7 @@ function Register-Collector {
 }
 
 function Get-RegisteredCollectors {
-    return , $script:_CollectorRegistry
+    return $script:_CollectorRegistry
 }
 
 function Test-CollectorEligible {

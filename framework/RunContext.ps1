@@ -1,4 +1,4 @@
-# Run identity, held-privilege set, and repo root.
+﻿# Run identity, held-privilege set, and repo root.
 # New-RunContext is called once per pass (user-context and elevated).
 
 function New-RunContext {

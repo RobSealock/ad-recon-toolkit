@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Compares two assessment runs and reports configuration drift.
 

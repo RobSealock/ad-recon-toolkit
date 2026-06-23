@@ -1,4 +1,4 @@
-# DNS collector — all zones, all records, dynamic update policy, WPAD/wildcard,
+﻿# DNS collector — all zones, all records, dynamic update policy, WPAD/wildcard,
 # ACL/DnsAdmins, 24-hour new record detection, orphaned record detection.
 #
 # MinPrivilege: AnyAuthUser
@@ -56,7 +56,7 @@ function _DNS_EnumerateZones {
             $zones.Add(@{
                 Name      = $_.Properties['name'][0].ToString()
                 Partition = $Partition
-                Dn        = $_.Path -replace '^LDAP://',''
+                Dn        = ($_.Path -replace '^LDAP://','')
                 Created   = if ($_.Properties['whencreated'].Count) { $_.Properties['whencreated'][0] } else { $null }
             })
         }

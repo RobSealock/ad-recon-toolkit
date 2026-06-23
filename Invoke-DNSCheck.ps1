@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Standalone one-shot DNS assessment. Runs the DNS collector in isolation.
 

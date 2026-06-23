@@ -1,4 +1,4 @@
-# ad-recon-toolkit global settings.
+﻿# ad-recon-toolkit global settings.
 # Override locally in config\settings.local.psd1 (git-ignored).
 
 @{

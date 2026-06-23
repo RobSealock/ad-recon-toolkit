@@ -1,4 +1,4 @@
-# DHCP collector — authorized servers, scopes, options, audit logging.
+﻿# DHCP collector — authorized servers, scopes, options, audit logging.
 # MinPrivilege: DHCPRead (DhcpServer module or netsh dhcp).
 #
 # Findings emitted:

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Manifest-driven collector orchestrator.
 

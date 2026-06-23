@@ -1,4 +1,4 @@
-# Locksmith2 collector — AD CS / PKI vulnerabilities ESC1-ESC16.
+﻿# Locksmith2 collector — AD CS / PKI vulnerabilities ESC1-ESC16.
 # MinPrivilege: CARead (Locksmith needs to read CA enrollment services and templates).
 # Module: Locksmith (installed from PSGallery by Install-Prereqs.ps1)
 

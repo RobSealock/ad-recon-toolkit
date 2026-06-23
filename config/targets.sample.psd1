@@ -1,4 +1,4 @@
-# Optional explicit target list for the Host-OS collector.
+﻿# Optional explicit target list for the Host-OS collector.
 # Copy to config\targets.psd1 (git-ignored) and populate.
 #
 # Default behaviour (no targets.psd1): Host-OS scans all DCs and discovered
