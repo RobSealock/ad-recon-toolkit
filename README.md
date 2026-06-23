@@ -59,7 +59,7 @@ Run `Install-Prereqs.ps1` to fetch and verify all binaries automatically (requir
 
 ## Configuration switches
 
-All switches live in `config\settings.psd1`. Local overrides (API tokens, credentials, per-machine flags) go in `config\settings.local.psd1` — that file is git-ignored and never committed.
+All switches live in `config\settings.psd1`. Local overrides (API tokens, credentials, per-machine flags) go in `config\settings.local.psd1` — **this file does not ship with the repo; create it yourself** (it's git-ignored via `.gitignore` so credentials never get committed). It only needs the keys you want to override — anything you omit falls back to `settings.psd1`'s default.
 
 | Switch | Default | Effect |
 |---|---|---|
@@ -72,6 +72,8 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 | `EnableCertipy` | `$false` | Run Certipy AD CS scanner (requires Python + `pip install certipy-ad`); findings supplement Locksmith in CA-Config |
 
 `EnableCertipy` also requires `CertipyUsername` and `CertipyPassword` in `settings.local.psd1` (or a valid Kerberos ticket on a Linux/macOS run host). See the [Certipy section](#optional-certipy-ad-cs--esc1esc16) below.
+
+To scan hosts beyond the auto-discovered DCs/AD-role servers, set `TargetsFile = 'config\targets.psd1'` in `settings.psd1`/`settings.local.psd1`. Like `settings.local.psd1`, `config\targets.psd1` does not ship with the repo and is git-ignored — copy the template at `config\targets.sample.psd1` to `config\targets.psd1` and populate it.
 
 ---
 
