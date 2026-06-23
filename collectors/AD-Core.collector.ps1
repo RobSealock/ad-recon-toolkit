@@ -48,6 +48,15 @@
 #   ADC-031   Forest functional level below 2016
 #   ADC-032   Fine-Grained Password Policy grants weaker policy to privileged group
 #   ADC-033   Stale DC computer objects (no logon > 90 days)
+#   ADC-034   LAPS not deployed (schema absent or no computers enrolled)
+#   ADC-035   RC4 Kerberos encryption still allowed at domain level
+#   ADC-036   Built-in Guest account enabled
+#   ADC-037   Built-in Administrator account not renamed (and enabled)
+#   ADC-038   Schema Admins group has active members
+#   ADC-039   Entra Connect sync account password age > 365 days
+#   ADC-040   AZUREADSSOACC$ Kerberos key not rotated (Seamless SSO silver ticket path)
+#   ADC-041   RODC Password Replication Policy — sensitive groups in reveal set
+#   ADC-042   EXCHANGE WINDOWS PERMISSIONS has WriteDACL on domain root
 #
 # Review-Required records (not findings — presence flagged for manual review):
 #   RODC, Exchange, SCCM/MECM, ADFS, Entra Connect, WSUS
@@ -998,6 +1007,130 @@ function _ADC_CollectRolePresence {
     return $roles
 }
 
+# =============================================================================
+# SPRINT 5 — BUILTIN HYGIENE / LAPS / KERBEROS ENC / ENTRA / RODC / EXCHANGE
+# =============================================================================
+
+function _ADC_CheckBuiltinAccounts {
+    param([string]$DomainDn)
+    $result = @{ guestEnabled=$false; adminNotRenamed=$false; adminEnabled=$false }
+    try {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s.Filter = '(samaccountname=Guest)'
+        $s.PropertiesToLoad.AddRange([string[]]@('useraccountcontrol'))
+        $s.SizeLimit = 1
+        $g = $s.FindOne()
+        if ($g) { $result.guestEnabled = -not ([int]$g.Properties['useraccountcontrol'][0] -band 0x02) }
+
+        $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s2.Filter = '(samaccountname=Administrator)'
+        $s2.PropertiesToLoad.AddRange([string[]]@('useraccountcontrol'))
+        $s2.SizeLimit = 1
+        $a = $s2.FindOne()
+        if ($a) {
+            $result.adminEnabled    = -not ([int]$a.Properties['useraccountcontrol'][0] -band 0x02)
+            $result.adminNotRenamed = $true
+        }
+    } catch { Write-Verbose "[AD-Core] Builtin account check failed: $_" }
+    return $result
+}
+
+function _ADC_CheckLAPSDeployment {
+    param([string]$DomainDn, [string]$SchemaDn)
+    $result = @{ schemaPresent=$false; lapsVersion='none'; anyComputerEnrolled=$false }
+    try {
+        $lapsV1 = $false; $lapsV2 = $false
+        try { $v1 = [adsi]"LDAP://CN=ms-Mcs-AdmPwd,$SchemaDn"; $lapsV1 = ($v1 -and $v1.Properties['cn'].Count -gt 0) } catch {}
+        try { $v2 = [adsi]"LDAP://CN=msLAPS-Password,$SchemaDn"; $lapsV2 = ($v2 -and $v2.Properties['cn'].Count -gt 0) } catch {}
+        $result.schemaPresent = $lapsV1 -or $lapsV2
+        $result.lapsVersion   = if ($lapsV2) { 'v2' } elseif ($lapsV1) { 'v1' } else { 'none' }
+        if ($result.schemaPresent) {
+            $attr = if ($lapsV2) { 'msLAPS-PasswordExpirationTime' } else { 'ms-Mcs-AdmPwdExpirationTime' }
+            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+            $s.Filter = "(&(objectCategory=computer)($attr=*))"; $s.PageSize = 1; $s.SizeLimit = 1
+            $s.PropertiesToLoad.Add('cn') | Out-Null
+            $result.anyComputerEnrolled = ($null -ne $s.FindOne())
+        }
+    } catch { Write-Verbose "[AD-Core] LAPS deployment check failed: $_" }
+    return $result
+}
+
+function _ADC_CheckKerberosEncryption {
+    param([string]$DomainDn)
+    # Bits: 1=DES-CRC, 2=DES-MD5, 4=RC4-HMAC, 8=AES128, 16=AES256; 0/absent = OS default (RC4 allowed)
+    try {
+        $d = [adsi]"LDAP://$DomainDn"
+        $enc = try { [int]$d.Properties['msDS-SupportedEncryptionTypes'][0] } catch { 0 }
+        return @{ encryptionTypes=$enc; rc4Allowed=[bool](($enc -eq 0) -or ($enc -band 0x04)) }
+    } catch { return @{ encryptionTypes=0; rc4Allowed=$true } }
+}
+
+function _ADC_CollectEntraHybrid {
+    param([string]$DomainDn)
+    $result = @{ hasSyncAccount=$false; syncAccountName=''; syncAccountPwdAgeDays=-1; hasSsoComputer=$false }
+    try {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s.Filter = '(&(objectClass=user)(|(samaccountname=MSOL_*)(samaccountname=AZUREAD_*)))'
+        $s.PropertiesToLoad.AddRange([string[]]@('samaccountname','pwdlastset')); $s.SizeLimit = 1
+        $sync = $s.FindOne()
+        if ($sync) {
+            $result.hasSyncAccount  = $true
+            $result.syncAccountName = $sync.Properties['samaccountname'][0].ToString()
+            $raw = if ($sync.Properties['pwdlastset'].Count) { [long]$sync.Properties['pwdlastset'][0] } else { 0 }
+            if ($raw -gt 0) { $result.syncAccountPwdAgeDays = [int]((Get-Date) - [datetime]::FromFileTime($raw)).TotalDays }
+        }
+        $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s2.Filter = '(samaccountname=AZUREADSSOACC$)'; $s2.PropertiesToLoad.Add('cn') | Out-Null; $s2.SizeLimit = 1
+        $result.hasSsoComputer = ($null -ne $s2.FindOne())
+    } catch { Write-Verbose "[AD-Core] Entra hybrid check failed: $_" }
+    return $result
+}
+
+function _ADC_CollectRODCPRP {
+    param([string]$DomainDn)
+    $issues = [System.Collections.Generic.List[hashtable]]::new()
+    try {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s.Filter  = '(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))'
+        $s.PageSize = 100
+        $s.PropertiesToLoad.AddRange([string[]]@('cn','msDS-RevealOnDemandGroup'))
+        $s.FindAll() | ForEach-Object {
+            $p = $_.Properties
+            $cn = if ($p['cn'].Count) { $p['cn'][0].ToString() } else { 'unknown' }
+            $revealSet = @($p['msds-revealondemandgroup'] | Where-Object { $_ } | ForEach-Object { $_.ToString() })
+            $sensitive = @($revealSet | Where-Object {
+                $_ -match '(?i)CN=(Domain Admins|Enterprise Admins|Schema Admins|Administrators|Domain Controllers),'
+            })
+            if ($sensitive.Count -gt 0) { $issues.Add(@{ rodcCN=$cn; sensitiveGroupsInReveal=$sensitive }) }
+        }
+    } catch { Write-Verbose "[AD-Core] RODC PRP check failed: $_" }
+    return $issues
+}
+
+function _ADC_CheckExchangeDACL {
+    param([string]$DomainDn)
+    $result = @{ exchangeWriteDacl=$false; exchangeGroupDn='' }
+    try {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s.Filter = '(samaccountname=Exchange Windows Permissions)'
+        $s.PropertiesToLoad.Add('distinguishedname') | Out-Null; $s.SizeLimit = 1
+        $exGrp = $s.FindOne()
+        if (-not $exGrp) { return $result }
+        $result.exchangeGroupDn = $exGrp.Properties['distinguishedname'][0].ToString()
+        $domObj = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$DomainDn")
+        foreach ($ace in $domObj.psbase.ObjectSecurity.Access) {
+            if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+            $trustee = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.IdentityReference.Value }
+            if ($trustee -imatch 'Exchange Windows Permissions') {
+                if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl) {
+                    $result.exchangeWriteDacl = $true; break
+                }
+            }
+        }
+    } catch { Write-Verbose "[AD-Core] Exchange DACL check failed: $_" }
+    return $result
+}
+
 function _ADCore_Collect {
     param($RunContext, $Settings, $RunRoot)
 
@@ -1053,6 +1186,25 @@ function _ADCore_Collect {
 
     Write-Host "         [AD-Core] Stale DC objects..."
     $staleDCs    = _ADC_CollectStaleDCs -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Builtin account hygiene (Guest, Administrator)..."
+    $builtinAccts = _ADC_CheckBuiltinAccounts -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] LAPS deployment coverage..."
+    $schemaDn     = $rootDse.schemaNamingContext.ToString()
+    $lapsDeployment = _ADC_CheckLAPSDeployment -DomainDn $domainDn -SchemaDn $schemaDn
+
+    Write-Host "         [AD-Core] Kerberos encryption types (RC4 at domain level)..."
+    $kerberosEnc  = _ADC_CheckKerberosEncryption -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Entra hybrid identity checks..."
+    $entraHybrid  = _ADC_CollectEntraHybrid -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] RODC Password Replication Policy..."
+    $rodcPRP      = _ADC_CollectRODCPRP -DomainDn $domainDn
+
+    Write-Host "         [AD-Core] Exchange Windows Permissions DACL check..."
+    $exchangeDACL = _ADC_CheckExchangeDACL -DomainDn $domainDn
 
     # ── Evaluate findings ─────────────────────────────────────────────────────
     $findings = [System.Collections.Generic.List[object]]::new()
@@ -1395,6 +1547,88 @@ function _ADCore_Collect {
             -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
     }
 
+    # ADC-034: LAPS not deployed (schema absent or no computers enrolled)
+    if (-not $lapsDeployment.schemaPresent) {
+        $findings.Add((New-Finding -Id 'ADC-034' -Severity 'High' `
+            -Technique 'T1078.002' `
+            -Description "LAPS schema extension is NOT present — LAPS is not deployed in this domain. Without LAPS, local Administrator passwords are manually managed and frequently reused across machines. A single compromised local admin credential grants pass-the-hash access to all machines sharing that password. Deploy Windows LAPS (built into Server 2019+/Win11) or legacy LAPS; schema extension is required before GPO enrollment can occur." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    } elseif (-not $lapsDeployment.anyComputerEnrolled) {
+        $findings.Add((New-Finding -Id 'ADC-034' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "LAPS schema ($($lapsDeployment.lapsVersion)) is present but NO computer objects have LAPS expiry time populated — LAPS is not actively managing any local Administrator passwords. Verify the LAPS GPO/policy is deployed and that the LAPS CSE (v1) or Windows LAPS client-side extension (v2) is installed on target machines. Schema presence alone does not protect endpoints." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-035: RC4 Kerberos encryption still allowed at domain level
+    if ($kerberosEnc.rc4Allowed) {
+        $findings.Add((New-Finding -Id 'ADC-035' -Severity 'Medium' `
+            -Technique 'T1558.003' `
+            -Description "RC4 Kerberos encryption is allowed at the domain level (msDS-SupportedEncryptionTypes = $($kerberosEnc.encryptionTypes); value 0 = OS default which includes RC4). RC4 TGS tickets for Kerberoastable service accounts can be cracked offline far faster than AES128/256 equivalents. Enforce AES-only: set msDS-SupportedEncryptionTypes to 24 (0x18 = AES128+AES256) on the domain object and all service accounts with SPNs. Verify all services support AES before enforcing to prevent auth breakage." `
+            -Reference 'https://attack.mitre.org/techniques/T1558/003/'))
+    }
+
+    # ADC-036: Built-in Guest account enabled
+    if ($builtinAccts.guestEnabled) {
+        $findings.Add((New-Finding -Id 'ADC-036' -Severity 'High' `
+            -Technique 'T1078.001' `
+            -Description "The built-in domain Guest account is ENABLED. The Guest account has no password requirement by default and can provide unauthenticated or low-friction access to domain resources. It should always be disabled. Disable via: Disable-ADAccount -Identity Guest." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/001/'))
+    }
+
+    # ADC-037: Built-in Administrator not renamed (and currently enabled)
+    if ($builtinAccts.adminNotRenamed -and $builtinAccts.adminEnabled) {
+        $findings.Add((New-Finding -Id 'ADC-037' -Severity 'Medium' `
+            -Technique 'T1078.002' `
+            -Description "The built-in domain Administrator account is ENABLED and still named 'Administrator'. This well-known SID-500 account is targeted in every password-spray campaign. Rename the account (samAccountName) to an obscure value, optionally creating a decoy named 'Administrator' (enabled, complex password, no logon rights, with alerting). Consider restricting interactive logon via Deny logon locally GPO." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-038: Schema Admins non-empty (active members)
+    $schemaAdminsActive = @($privGroups['Schema Admins'] | Where-Object { $_.enabled })
+    if ($schemaAdminsActive.Count -gt 0) {
+        $names = ($schemaAdminsActive | Select-Object -First 5 | ForEach-Object { $_.name }) -join ', '
+        $findings.Add((New-Finding -Id 'ADC-038' -Severity 'High' `
+            -Technique 'T1098' `
+            -Description "Schema Admins has $($schemaAdminsActive.Count) active member(s): $names. Schema Admins should have zero permanent members — add accounts only during schema update operations (e.g., Exchange prep, LAPS extension), then remove immediately. Permanent Schema Admin membership allows unauthorized modification of AD attribute and class definitions, affecting every object in the forest." `
+            -Reference 'https://attack.mitre.org/techniques/T1098/'))
+    }
+
+    # ADC-039: Entra Connect sync account password age > 365 days
+    if ($entraHybrid.hasSyncAccount -and $entraHybrid.syncAccountPwdAgeDays -gt 365) {
+        $findings.Add((New-Finding -Id 'ADC-039' -Severity 'High' `
+            -Technique 'T1078.002' `
+            -Description "Entra Connect sync account '$($entraHybrid.syncAccountName)' password has not been rotated in $($entraHybrid.syncAccountPwdAgeDays) days. This account has broad AD read rights (all objects, attributes including hashes in pass-through hybrid flows) and can be used to enumerate the entire directory. Rotate via Entra Connect configuration wizard — it handles both on-prem and cloud credentials atomically. Target: rotate every 90 days." `
+            -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+    }
+
+    # ADC-040: AZUREADSSOACC$ present — static Kerberos key silver ticket risk
+    if ($entraHybrid.hasSsoComputer) {
+        $findings.Add((New-Finding -Id 'ADC-040' -Severity 'Medium' `
+            -Technique 'T1558.002' `
+            -Description "Seamless SSO computer account (AZUREADSSOACC\$) is present — hybrid identity with Seamless SSO is active. AZUREADSSOACC\$'s Kerberos key is static and does not auto-rotate. An attacker with DCSync rights can extract this key and forge Kerberos service tickets for any on-premises identity to Microsoft Online Services, bypassing MFA. Remediate: rotate the AZUREADSSOACC\$ Kerberos key every 30 days via the Seamless SSO PowerShell refresh script (Update-AzureADSSOForest)." `
+            -Reference 'https://attack.mitre.org/techniques/T1558/002/'))
+    }
+
+    # ADC-041: RODC Password Replication Policy — sensitive groups in reveal set
+    if ($rodcPRP.Count -gt 0) {
+        $preview = ($rodcPRP | Select-Object -First 3 | ForEach-Object {
+            "$($_.rodcCN): $($_.sensitiveGroupsInReveal -join '; ')"
+        }) -join ' | '
+        $findings.Add((New-Finding -Id 'ADC-041' -Severity 'High' `
+            -Technique 'T1552.004' `
+            -Description "$($rodcPRP.Count) RODC(s) have Tier 0 security groups in their Password Replication Policy allowed-reveal set: $preview. If the RODC is compromised, its cached passwords include all accounts in the reveal set — effectively granting domain compromise via the RODC. Remove all Tier 0 groups from msDS-RevealOnDemandGroup and add them to msDS-NeverRevealGroup on each affected RODC." `
+            -Reference 'https://attack.mitre.org/techniques/T1552/004/'))
+    }
+
+    # ADC-042: Exchange Windows Permissions WriteDACL on domain root (DCSync path)
+    if ($exchangeDACL.exchangeWriteDacl) {
+        $findings.Add((New-Finding -Id 'ADC-042' -Severity 'High' `
+            -Technique 'T1222.001' `
+            -Description "EXCHANGE WINDOWS PERMISSIONS ($($exchangeDACL.exchangeGroupDn)) has WriteDACL on the domain root object. Any member of this Exchange group can add DCSync rights (Replicating Directory Changes All) to any account on the domain root DACL — a well-documented path from Exchange Server compromise to full domain credential theft. Remediate via Microsoft Exchange Health Checker DACL remediation script or remove the WriteDACL ACE manually using ADSIEdit/Set-Acl." `
+            -Reference 'https://attack.mitre.org/techniques/T1222/001/'))
+    }
+
     # ── Emit records ──────────────────────────────────────────────────────────
 
     # Domain record
@@ -1654,6 +1888,6 @@ function _ADCore_Collect {
 
 Register-Collector `
     -Name        'AD-Core' `
-    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, constrained/RBCD), shadow credentials, AdminSDHolder DACL, gMSA rights, LAPS read rights, account hygiene (sIDHistory, PASSWD_NOTREQD, reversible encryption, secrets-in-attrs), privileged groups, DCSync rights, password policy, trusts, fine-grained PSOs, stale DCs, pre-Win2k group, anonymous LDAP, Protected Users gaps, ghost accounts, DONT_EXPIRE_PASSWORD, forest functional level, tombstone lifetime' `
+    -Description 'Core AD: domain/forest metadata, Kerberos (krbtgt, roasting, delegation, constrained/RBCD, RC4 enc level), shadow credentials, AdminSDHolder DACL, gMSA rights, LAPS read rights + deployment, account hygiene (sIDHistory, PASSWD_NOTREQD, reversible encryption, secrets-in-attrs, builtin Guest/Admin), privileged groups (Schema Admins non-empty), DCSync rights, password policy, trusts, fine-grained PSOs, stale DCs, pre-Win2k group, anonymous LDAP, Protected Users gaps, ghost accounts, DONT_EXPIRE_PASSWORD, forest functional level, tombstone lifetime, Entra hybrid (sync acct, AZUREADSSOACC$), RODC PRP, Exchange WriteDACL' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _ADCore_Collect @PSBoundParameters }

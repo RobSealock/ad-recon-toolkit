@@ -21,6 +21,9 @@
 #   GPO-010  Group3r flagged issues (high/critical from external analysis)
 #   GPO-011  AppLocker or WDAC not configured for Domain Controllers
 #   GPO-012  Restricted Groups / Group Policy Preferences Groups not configured for Domain Admins membership
+#   GPO-013  Non-Tier-0 principals have write rights on DC-linked GPOs
+#   GPO-014  No deny-logon user rights configured in DC-scoped GPOs
+#   GPO-015  Orphaned GPOs (not linked to any container)
 
 # ── XML namespaces used in GPO reports ───────────────────────────────────────
 $script:_GPO_NS = @{ gp = 'http://www.microsoft.com/GroupPolicy/Settings' }
@@ -262,6 +265,79 @@ function _GPO_CheckRestrictedGroups {
     return $false
 }
 
+function _GPO_CheckGPOModificationRights {
+    param([string[]]$GpoGuids, [string]$DomainDn)
+    $issues = [System.Collections.Generic.List[hashtable]]::new()
+    $policiesDn = "CN=Policies,CN=System,$DomainDn"
+    $safePatterns = @('CREATOR OWNER','SYSTEM','Enterprise Admins','Domain Admins',
+                      'Administrators','Group Policy Creator Owners','NT AUTHORITY')
+    $dangerous = [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::GenericAll  -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite
+    foreach ($guid in $GpoGuids) {
+        try {
+            $gpoObj = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=$guid,$policiesDn")
+            foreach ($ace in $gpoObj.psbase.ObjectSecurity.Access) {
+                if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+                if (-not ($ace.ActiveDirectoryRights -band $dangerous)) { continue }
+                $trustee = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.IdentityReference.Value }
+                $isSafe  = $false
+                foreach ($p in $safePatterns) { if ($trustee -imatch [regex]::Escape($p)) { $isSafe = $true; break } }
+                if (-not $isSafe) { $issues.Add(@{ gpoGuid=$guid; trustee=$trustee; rights=$ace.ActiveDirectoryRights.ToString() }) }
+            }
+        } catch { Write-Verbose "[GPO] DACL check failed for $guid: $_" }
+    }
+    return $issues
+}
+
+function _GPO_CheckTier0LogonRestrictions {
+    param([string[]]$GpoGuids, [string]$DomainFQDN)
+    foreach ($guid in $GpoGuids) {
+        try {
+            if (-not (Get-Command Get-GPOReport -ErrorAction SilentlyContinue)) { return $false }
+            [xml]$xml = Get-GPOReport -Guid $guid -ReportType Xml -Domain $DomainFQDN -EA Stop
+            $denyNodes = $xml.SelectNodes(
+                '//*[local-name()="UserRightsAssignment"][*[local-name()="Name" and (text()="SeDenyInteractiveLogonRight" or text()="SeDenyRemoteInteractiveLogonRight" or text()="SeDenyNetworkLogonRight")]]')
+            if ($denyNodes.Count -gt 0) { return $true }
+        } catch { Write-Verbose "[GPO] Logon restriction check failed for $guid: $_" }
+    }
+    return $false
+}
+
+function _GPO_FindOrphanedGPOs {
+    param([hashtable[]]$AllGpos, [string]$DomainDn)
+    $linked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    try {
+        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s.Filter = '(|(objectClass=organizationalUnit)(objectClass=domainDNS))'
+        $s.PageSize = 500; $s.SearchScope = 'Subtree'
+        $s.PropertiesToLoad.Add('gPLink') | Out-Null
+        $s.FindAll() | ForEach-Object {
+            $gpl = $_.Properties['gplink']
+            if ($gpl.Count -and $gpl[0]) {
+                [regex]::Matches($gpl[0].ToString(), '\{([0-9A-Fa-f\-]+)\}') |
+                    ForEach-Object { [void]$linked.Add("{$($_.Groups[1].Value.ToUpper())}") }
+            }
+        }
+        # Also walk Sites container for site-linked GPOs
+        try {
+            $cfgDn = ([adsi]'LDAP://RootDSE').configurationNamingContext.ToString()
+            $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://CN=Sites,$cfgDn")
+            $s2.Filter = '(gPLink=*)'; $s2.PageSize = 200
+            $s2.PropertiesToLoad.Add('gPLink') | Out-Null
+            $s2.FindAll() | ForEach-Object {
+                $gpl = $_.Properties['gplink']
+                if ($gpl.Count -and $gpl[0]) {
+                    [regex]::Matches($gpl[0].ToString(), '\{([0-9A-Fa-f\-]+)\}') |
+                        ForEach-Object { [void]$linked.Add("{$($_.Groups[1].Value.ToUpper())}") }
+                }
+            }
+        } catch {}
+    } catch { Write-Verbose "[GPO] Orphaned GPO detection failed: $_" }
+    return @($AllGpos | Where-Object { -not $linked.Contains($_.guid.ToUpper()) -and ($_.flags -band 3) -ne 3 })
+}
+
 # =============================================================================
 # MAIN COLLECTOR
 # =============================================================================
@@ -449,6 +525,36 @@ function _GPO_Collect {
                 -Description "No GPO linked to Domain Controllers or domain root configures Restricted Groups (Computer Configuration > Windows Settings > Security Settings > Restricted Groups) or GPP Groups for the Domain Admins group. Without a Restricted Groups policy, unauthorized additions to Domain Admins will not be automatically removed on next Group Policy application — a persistence mechanism for attackers who have added themselves. Configure Restricted Groups with the approved DA membership list." `
                 -Reference 'https://attack.mitre.org/techniques/T1098/'))
         }
+
+        # GPO-013: Non-Tier-0 write rights on GPOs linked to Domain Controllers OU
+        $gpoModIssues = _GPO_CheckGPOModificationRights -GpoGuids $dcLinkedGuids -DomainDn $domainDn
+        if ($gpoModIssues.Count -gt 0) {
+            $preview = ($gpoModIssues | Select-Object -First 5 |
+                ForEach-Object { "$($_.trustee) on $($_.gpoGuid): $($_.rights)" }) -join '; '
+            $findings.Add((New-Finding -Id 'GPO-013' -Severity 'Critical' `
+                -Technique 'T1484.001' `
+                -Description "$($gpoModIssues.Count) non-Tier-0 ACE(s) grant write rights (WriteDACL/WriteOwner/GenericAll/GenericWrite) on GPO(s) linked to the Domain Controllers OU: $preview. A principal with GPO write rights on a DC OU GPO can deploy arbitrary registry settings, startup scripts, or software to every DC at next refresh — direct domain compromise path. Investigate each ACE immediately." `
+                -Reference 'https://attack.mitre.org/techniques/T1484/001/'))
+        }
+
+        # GPO-014: No deny-logon user rights in DC-scoped GPOs
+        $hasDenyLogon = _GPO_CheckTier0LogonRestrictions -GpoGuids $allDcGuids -DomainFQDN $domainFQDN
+        if (-not $hasDenyLogon) {
+            $findings.Add((New-Finding -Id 'GPO-014' -Severity 'High' `
+                -Technique 'T1078.002' `
+                -Description "No GPO linked to the Domain Controllers OU or domain root configures any Deny logon user rights (SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight, or SeDenyNetworkLogonRight). Without explicit deny rights, any account inadvertently granted local-admin access to a DC can log on interactively, and non-Tier-0 accounts can be used to authenticate to DCs over the network. Configure deny logon for Tier 1/2 admin groups and service accounts in a DC-scoped GPO." `
+                -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
+        }
+
+        # GPO-015: Orphaned GPOs
+        $orphanedGPOs = _GPO_FindOrphanedGPOs -AllGpos $gpos -DomainDn $domainDn
+        if ($orphanedGPOs.Count -gt 0) {
+            $names = ($orphanedGPOs | Select-Object -First 8 | ForEach-Object { $_.displayName }) -join ', '
+            $findings.Add((New-Finding -Id 'GPO-015' -Severity 'Low' `
+                -Technique 'T1484.001' `
+                -Description "$($orphanedGPOs.Count) GPO(s) are not linked to any container (OU, domain, or site): $names. Orphaned GPOs accumulate stale configuration and create governance risk — an attacker who can re-link an orphaned GPO to a sensitive OU gains policy-execution rights over that OU without creating a new GPO (evades monitoring for new GPO creation). Review and delete all unlinked GPOs that are no longer required." `
+                -Reference 'https://attack.mitre.org/techniques/T1484/001/'))
+        }
     }
 
     # ── Emit records ──────────────────────────────────────────────────────────
@@ -528,6 +634,6 @@ function _GPO_Collect {
 
 Register-Collector `
     -Name        'GPO-Settings' `
-    -Description 'Enumerates GPOs via LDAP, scans SYSVOL for GPP credentials, parses security settings via Get-GPOReport (GPMC), checks AppLocker/WDAC on DC OU (GPO-011), Restricted Groups for DA (GPO-012), optionally runs Group3r' `
+    -Description 'Enumerates GPOs via LDAP, scans SYSVOL for GPP credentials, parses security settings via Get-GPOReport (GPMC), checks AppLocker/WDAC on DC OU (GPO-011), Restricted Groups for DA (GPO-012), GPO modification rights on DC-linked GPOs (GPO-013), Tier 0 logon restrictions (GPO-014), orphaned GPOs (GPO-015), optionally runs Group3r' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _GPO_Collect @PSBoundParameters }

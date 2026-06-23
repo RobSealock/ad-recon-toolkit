@@ -147,6 +147,15 @@ Severity: **Critical** → **High** → **Medium** → **Low** → **Information
 | ADC-031 | Forest functional level below 2016 | Medium |
 | ADC-032 | Fine-Grained Password Policy with `minLength < 14` or no lockout threshold | Medium |
 | ADC-033 | DC computer objects with no logon in 90+ days (stale/undecommissioned DCs) | Medium |
+| ADC-034 | LAPS not deployed — local admin passwords not managed (schema absent or no enrolled computers) | High/Medium |
+| ADC-035 | RC4 Kerberos encryption allowed on domain (`msDS-SupportedEncryptionTypes` includes RC4) | Medium |
+| ADC-036 | Built-in Guest account enabled | High |
+| ADC-037 | Built-in Administrator account not renamed and still enabled | Medium |
+| ADC-038 | Schema Admins group has permanent members | High |
+| ADC-039 | Entra Connect sync account (`MSOL_*`/`AZUREAD_*`) password age exceeds 365 days | High |
+| ADC-040 | `AZUREADSSOACC$` Seamless SSO computer account present — static Kerberos key risk | Medium |
+| ADC-041 | RODC Password Replication Policy includes Tier 0 groups in the reveal (allow) list | High |
+| ADC-042 | `EXCHANGE WINDOWS PERMISSIONS` group has WriteDACL on domain root — DCSync escalation path | High |
 
 ---
 
@@ -183,6 +192,11 @@ Runs over WinRM. Each server is scanned independently; collection errors are sof
 | HOST-025 | WinRM `AllowUnencrypted = 1` — plaintext PowerShell remoting traffic | High |
 | HOST-026 | Remote Registry service running on DC | Medium |
 | HOST-027 | BitLocker not enabled on DC OS volume — offline NTDS.dit theft risk | Medium |
+| HOST-028 | IPv6 not fully disabled on DC — mitm6 DHCPv6 relay attack surface | High |
+| HOST-029 | SMB client signing not required — SMB relay from workstations to DC | Medium |
+| HOST-030 | Cached domain logons count > 0 on DC (`CachedLogonsCount`) — offline credential theft | High |
+| HOST-031 | Netlogon secure channel signing/sealing not required (`RequireSignOrSeal`/`SealSecureChannel`) | High |
+| HOST-032 | AD/DC system-state backup not found or older than 30 days | High |
 
 ---
 
@@ -204,6 +218,7 @@ Includes native template/CA evaluation, Locksmith integration (ESC1–ESC16), op
 | ADCS-010 | CA has `EDITF_ATTRIBUTESUBJECTALTNAME2` flag — any template allows requestor-supplied SAN (ESC6) | Critical |
 | ADCS-011 | HTTP enrollment endpoint without Extended Protection for Authentication — NTLM relay to CA (ESC8) | Critical |
 | ADCS-012 | Non-default CA present in `NTAuthCertificates` — can issue domain authentication certificates | High |
+| ADCS-013 | DC Authentication template published but no DC has a certificate enrolled (`userCertificate` unset) | Medium |
 
 ---
 
@@ -223,6 +238,9 @@ Includes native template/CA evaluation, Locksmith integration (ESC1–ESC16), op
 | GPO-010 | Group3r findings (sensitive data in GPO settings) | Varies |
 | GPO-011 | No AppLocker or WDAC policy linked to the Domain Controllers OU | Medium |
 | GPO-012 | No Restricted Groups or GPP Groups policy enforcing Domain Admins membership | Medium |
+| GPO-013 | Non-Tier-0 principal has write rights (WriteDACL/WriteOwner/GenericAll/GenericWrite) on a DC-linked GPO | Critical |
+| GPO-014 | No deny-logon user rights (`SeDenyInteractiveLogonRight`, `SeDenyRemoteInteractiveLogonRight`) configured in DC OU GPO | High |
+| GPO-015 | Orphaned GPOs exist in AD (defined but not linked to any OU, domain root, or site) | Low |
 
 ---
 
@@ -239,6 +257,7 @@ Includes native template/CA evaluation, Locksmith integration (ESC1–ESC16), op
 | DNS-007 | Non-Tier-0 principal has `CreateChild`/`WriteProperty` on `MicrosoftDNS` or a zone (ADIDNS write) | High |
 | DNS-008 | DNS zone allows AXFR zone transfer to any IP — full zone data exposed | High |
 | DNS-009 | DNS server has forwarders pointing to public/external IP addresses | Medium |
+| DNS-010 | DNS scavenging not enabled on primary zone — stale records accumulate, enabling ADIDNS spoofing | Medium |
 
 ---
 
@@ -260,6 +279,7 @@ Includes native template/CA evaluation, Locksmith integration (ESC1–ESC16), op
 | AUD-012 | Sysmon not installed or configuration not loaded on DC | Medium |
 | AUD-013 | NTDS Field Engineering diagnostic level < 5 — expensive LDAP query logging (1644) not active | Low |
 | AUD-014 | Windows Event Forwarding (WEC) subscription not configured on DC — no centralized log collection | Medium |
+| AUD-015 | NTLM authentication auditing not enabled on DC (`AuditReceivingNTLMTraffic = 0`) — Event 8004 blind | Medium |
 
 ---
 

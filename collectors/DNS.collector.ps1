@@ -15,6 +15,7 @@
 #   DNS-007  Non-Tier-0 principal has CreateChild/WriteProperty on MicrosoftDNS or zone (ADIDNS write)
 #   DNS-008  Zone allows AXFR (zone transfer) to any IP (full zone data exposure)
 #   DNS-009  DNS forwarders include public/external IP addresses
+#   DNS-010  DNS scavenging not enabled for primary zone (stale record accumulation)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -321,17 +322,25 @@ function _DNS_Collect {
                     -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
             }
 
-            # DNS-008: Zone transfer restriction
-            # Get-DnsServerZone has a SecureSecondaries / SecondaryServers property
+            # DNS-008: Zone transfer restriction; DNS-010: Scavenging not configured
             try {
                 $dnsZone = Get-DnsServerZone -Name $zoneName -ComputerName $dnsServer -EA SilentlyContinue
-                if ($dnsZone -and $dnsZone.SecureSecondaries -eq 'NoSecureSecondaries') {
-                    $zoneFindings.Add((New-Finding -Id 'DNS-008' -Severity 'High' `
-                        -Technique 'T1590.002' `
-                        -Description "DNS zone '$zoneName' allows unrestricted AXFR zone transfers (SecureSecondaries=NoSecureSecondaries). Any host can request a full zone transfer and enumerate all DNS records — including internal hostnames, IP ranges, and service names. Restrict zone transfers to authorized secondary servers only, or disable AXFR if not needed." `
-                        -Reference 'https://attack.mitre.org/techniques/T1590/002/'))
+                if ($dnsZone) {
+                    if ($dnsZone.SecureSecondaries -eq 'NoSecureSecondaries') {
+                        $zoneFindings.Add((New-Finding -Id 'DNS-008' -Severity 'High' `
+                            -Technique 'T1590.002' `
+                            -Description "DNS zone '$zoneName' allows unrestricted AXFR zone transfers (SecureSecondaries=NoSecureSecondaries). Any host can request a full zone transfer and enumerate all DNS records — including internal hostnames, IP ranges, and service names. Restrict zone transfers to authorized secondary servers only, or disable AXFR if not needed." `
+                            -Reference 'https://attack.mitre.org/techniques/T1590/002/'))
+                    }
+                    # DNS-010: Scavenging not enabled for primary (non-auto-created) zones
+                    if ($dnsZone.ZoneType -eq 'Primary' -and -not $dnsZone.IsAutoCreated -and -not $dnsZone.Aging) {
+                        $zoneFindings.Add((New-Finding -Id 'DNS-010' -Severity 'Low' `
+                            -Technique 'T1557.001' `
+                            -Description "DNS scavenging is not enabled for zone '$zoneName' (Aging=False). Without scavenging, stale A/AAAA records from decommissioned servers accumulate indefinitely. When IP addresses are reused, old records point to attacker-controlled infrastructure — or stale records can be re-registered via ADIDNS dynamic update by any authenticated user (if the record is tombstoned). Enable: Set-DnsServerZoneAging -ZoneName '$zoneName' -Aging `$true -NoRefreshInterval 7.00:00:00 -RefreshInterval 7.00:00:00; also enable server-level scavenging via Set-DnsServerScavenging -ScavengingState `$true." `
+                            -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
+                    }
                 }
-            } catch { Write-Verbose "[DNS] Zone transfer check failed for $zoneName`: $_" }
+            } catch { Write-Verbose "[DNS] Zone transfer/scavenging check failed for $zoneName`: $_" }
 
             # Emit zone record
             $records.Add((New-ReconRecord `
@@ -442,6 +451,6 @@ function _DNS_Collect {
 
 Register-Collector `
     -Name        'DNS' `
-    -Description 'AD-integrated DNS: all zones, all records, dynamic update policy, WPAD/wildcard, 24-hour new record alert, orphaned record detection, DnsAdmins, zone transfer restrictions (DNS-008), external forwarders (DNS-009)' `
+    -Description 'AD-integrated DNS: all zones, all records, dynamic update policy, WPAD/wildcard, 24-hour new record alert, orphaned record detection, DnsAdmins, zone transfer restrictions (DNS-008), external forwarders (DNS-009), scavenging not configured (DNS-010)' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _DNS_Collect @PSBoundParameters }

@@ -41,6 +41,11 @@
 #   HOST-025  WinRM HTTP unencrypted allowed
 #   HOST-026  Remote Registry service running on DC
 #   HOST-027  BitLocker not enabled on DC volumes (DC only)
+#   HOST-028  IPv6 active without management controls (mitm6 attack surface)
+#   HOST-029  SMB client signing not required (LanmanWorkstation)
+#   HOST-030  Cached domain credentials allowed on DC (CachedLogonsCount > 0)
+#   HOST-031  Netlogon secure channel signing/sealing not enforced
+#   HOST-032  No recent AD backup detected on DC (>30 days)
 
 # ── Roles considered unexpected on a Domain Controller ───────────────────────
 $script:_HostOS_UnexpectedDCRoles = @(
@@ -398,6 +403,56 @@ $script:_HostOS_Script = {
             $f.bitlockerOsVolumeProtected = ($bl -and $bl.VolumeStatus -eq 'FullyEncrypted' -and $bl.ProtectionStatus -eq 'On')
         } catch {}
 
+        # SMB client signing (LanmanWorkstation — distinct from server-side LanmanServer check)
+        $smbCli = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters' -Name RequireSecuritySignature -EA SilentlyContinue).RequireSecuritySignature
+        $f.smbClientSigningRequired = ($smbCli -eq 1)
+
+        # IPv6 DisabledComponents bitmask; 0 or absent = IPv6 fully enabled
+        $ipv6dc = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters' -Name DisabledComponents -EA SilentlyContinue).DisabledComponents
+        $f.ipv6DisabledComponents = if ($null -eq $ipv6dc) { 0 } else { [int]$ipv6dc }
+        $f.ipv6FullyDisabled = (($f.ipv6DisabledComponents -band 0xFF) -eq 0xFF)
+
+        # Cached domain credential count (DCs should be 0)
+        $cacheVal = (& $rp 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name CachedLogonsCount -EA SilentlyContinue).CachedLogonsCount
+        $f.cachedLogonsCount = if ($null -eq $cacheVal) { 10 } else { try { [int]$cacheVal } catch { 10 } }
+
+        # Netlogon secure channel (Zerologon hardening)
+        $reqSign = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' -Name RequireSignOrSeal -EA SilentlyContinue).RequireSignOrSeal
+        $sealSC  = (& $rp 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' -Name SealSecureChannel -EA SilentlyContinue).SealSecureChannel
+        $f.netlogonRequireSignOrSeal = ($reqSign -eq 1)
+        $f.netlogonSealSecureChannel = ($sealSC  -eq 1)
+
+        # AD backup recency (Windows Server Backup event log or VSS shadow copy)
+        $f.backupInfo = @{ method='none'; lastBackupDate=''; daysSinceBackup=-1 }
+        try {
+            $wbSvc = Get-Service 'wbengine' -EA SilentlyContinue
+            if ($wbSvc) {
+                $bkEvt = Get-WinEvent -LogName 'Microsoft-Windows-Backup' -EA SilentlyContinue |
+                    Where-Object { $_.Id -eq 4 } | Sort-Object TimeCreated -Descending | Select-Object -First 1
+                if ($bkEvt) {
+                    $f.backupInfo = @{
+                        method         = 'WBS'
+                        lastBackupDate = $bkEvt.TimeCreated.ToString('o')
+                        daysSinceBackup= [int]((Get-Date) - $bkEvt.TimeCreated).TotalDays
+                    }
+                } else { $f.backupInfo = @{ method='WBS-no-jobs'; lastBackupDate=''; daysSinceBackup=-1 } }
+            } else {
+                $shadows = Get-CimInstance Win32_ShadowCopy -EA SilentlyContinue |
+                    Where-Object { $_.VolumeName -like "$env:SystemDrive*" }
+                if ($shadows) {
+                    $latest = $shadows |
+                        Sort-Object { [Management.ManagementDateTimeConverter]::ToDateTime($_.InstallDate) } -Descending |
+                        Select-Object -First 1
+                    $ts = [Management.ManagementDateTimeConverter]::ToDateTime($latest.InstallDate)
+                    $f.backupInfo = @{
+                        method         = 'VSS'
+                        lastBackupDate = $ts.ToString('o')
+                        daysSinceBackup= [int]((Get-Date) - $ts).TotalDays
+                    }
+                }
+            }
+        } catch {}
+
         # Local Administrator account
         $la = Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue
         $f.localAdminEnabled        = if ($la) { [bool]$la.Enabled } else { $false }
@@ -719,6 +774,56 @@ function _HostOS_EvaluateFindings {
                 -Description "BitLocker is NOT enabled on the OS volume of DC $host. An attacker with physical access (or a malicious hypervisor snapshot) can mount the NTDS.dit and SYSTEM hive offline to extract all domain credentials without any authentication. All DC volumes should be BitLocker-protected with a TPM PIN or startup key stored in a PAM system." `
                 -Reference 'https://attack.mitre.org/techniques/T1005/'))
         }
+
+        # HOST-028 IPv6 active without management controls (DC only — mitm6 attack surface)
+        if ($isDC -and -not $sf.ipv6FullyDisabled) {
+            $findings.Add((New-Finding -Id 'HOST-028' -Severity 'High' `
+                -Technique 'T1557' `
+                -Description "IPv6 is active on DC $host without full disable (DisabledComponents=0x$([Convert]::ToString($sf.ipv6DisabledComponents,16).ToUpper())). Unmanaged IPv6 enables the mitm6 attack: a rogue DHCPv6 server can advertise itself as the default IPv6 gateway and DNS resolver, intercept WPAD lookup traffic, and capture NTLM authentication for relay. Remediate: deploy DHCPv6/RA Guard on network switches, OR disable IPv6 on DCs via GPO registry key (HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\DisabledComponents=0xFF) if IPv6 is not operationally required." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/'))
+        }
+
+        # HOST-029 SMB client signing not required
+        if (-not $sf.smbClientSigningRequired) {
+            $findings.Add((New-Finding -Id 'HOST-029' -Severity 'Medium' `
+                -Technique 'T1557.001' `
+                -Description "SMB client signing is NOT required on $host (LanmanWorkstation\RequireSecuritySignature is not 1). Even if the SERVER enforces signing (HOST-012), a client that does not require signing can be coerced into an unsigned SMB session toward resources it connects to, enabling SMB relay against those targets. Set RequireSecuritySignature=1 in LanmanWorkstation\Parameters via GPO. This is the client-side control; HOST-012 checks the separate server-side (LanmanServer) setting." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
+        }
+
+        # HOST-030 Cached domain credentials on DC (DCs should cache 0)
+        if ($isDC -and $sf.cachedLogonsCount -gt 0) {
+            $findings.Add((New-Finding -Id 'HOST-030' -Severity 'High' `
+                -Technique 'T1003.005' `
+                -Description "Cached domain credential logon is ENABLED on DC $host (CachedLogonsCount=$($sf.cachedLogonsCount)). Cached credentials (MSCacheV2 hashes) are stored in the SECURITY registry hive and can be extracted by an attacker with SYSTEM access and cracked offline. DCs are always connected and never require cached credentials. Set to 0 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Interactive Logon: Number of previous logons to cache." `
+                -Reference 'https://attack.mitre.org/techniques/T1003/005/'))
+        }
+
+        # HOST-031 Netlogon secure channel not fully enforced (DC only)
+        if ($isDC -and (-not $sf.netlogonRequireSignOrSeal -or -not $sf.netlogonSealSecureChannel)) {
+            $missing = @()
+            if (-not $sf.netlogonRequireSignOrSeal) { $missing += 'RequireSignOrSeal=0' }
+            if (-not $sf.netlogonSealSecureChannel)  { $missing += 'SealSecureChannel=0'  }
+            $findings.Add((New-Finding -Id 'HOST-031' -Severity 'High' `
+                -Technique 'T1557' `
+                -Description "Netlogon secure channel signing/sealing is NOT fully enforced on DC $host: $($missing -join ', '). Both RequireSignOrSeal=1 and SealSecureChannel=1 must be set to cryptographically protect all Netlogon RPC traffic and prevent downgrade attacks. Enforce via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > 'Domain member: Digitally encrypt or sign secure channel data (always)' and 'Domain member: Digitally sign secure channel data (when possible)'." `
+                -Reference 'https://attack.mitre.org/techniques/T1557/'))
+        }
+
+        # HOST-032 No recent AD backup (DC only)
+        if ($isDC -and $sf.backupInfo) {
+            $bk = $sf.backupInfo
+            $days = if ($bk -is [hashtable]) { $bk.daysSinceBackup } else { -1 }
+            if ($days -lt 0 -or $days -gt 30) {
+                $reason = if ($days -lt 0) {
+                    "No backup detected on DC $host via Windows Server Backup or VSS shadow copies (method checked: $($bk.method))."
+                } else { "Last detected backup on DC $host is $days days old." }
+                $findings.Add((New-Finding -Id 'HOST-032' -Severity 'High' `
+                    -Technique 'T1490' `
+                    -Description "$reason Without a recent, tested backup, ransomware or malicious deletion of NTDS.dit may make domain recovery impossible. All DCs require a verified system-state backup (NTDS.dit + SYSTEM hive) at least every 30 days, stored offline or in immutable storage. Use Windows Server Backup system-state backup or a PAM-integrated AD backup solution." `
+                    -Reference 'https://attack.mitre.org/techniques/T1490/'))
+            }
+        }
     }
 
     return $findings
@@ -839,6 +944,6 @@ function _HostOS_Collect {
 
 Register-Collector `
     -Name        'Host-OS' `
-    -Description 'Per-server OS posture: roles, services, software, shares, local groups, scheduled tasks, security flags — DCs and AD-role servers via WinRM. Findings: HOST-001 through HOST-027 (NTLMv1/LM, Credential Guard, PSv2, LDAP channel binding, WinRM unencrypted, Remote Registry, BitLocker)' `
+    -Description 'Per-server OS posture: roles, services, software, shares, local groups, scheduled tasks, security flags — DCs and AD-role servers via WinRM. Findings: HOST-001 through HOST-032 (NTLMv1/LM, Credential Guard, PSv2, LDAP channel binding, WinRM, Remote Registry, BitLocker, IPv6 unmanaged, SMB client signing, cached logons on DC, Netlogon signing, AD backup recency)' `
     -MinPrivilege 'LocalAdmin' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _HostOS_Collect @PSBoundParameters }

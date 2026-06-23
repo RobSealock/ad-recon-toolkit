@@ -2082,4 +2082,326 @@
         MinPriv        = 'AnyAuthUser'
     }
 
+    # ── Sprint 5 new findings ────────────────────────────────────────────────────
+
+    'ADC-034' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Check LAPS schema: [adsi]"LDAP://CN=ms-Mcs-AdmPwd,$SchemaDn" + count computers with ms-Mcs-AdmPwdExpirationTime populated via LDAP — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP read — no attribute or object modified. Deploy LAPS via schema extension (Update-LapsADSchema) + GPO + CSE. Verify with Get-LapsADPassword before removing manual local admin processes.'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — schema extension (one-time write to Configuration NC) is a forest-wide irreversible change; test in a lab forest first. GPO deployment is scoped to OUs and can be reverted.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-035' = @{
+        Techniques     = @('T1558.003')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: Kerberoasting')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read msDS-SupportedEncryptionTypes on domain root object via LDAP — confirm RC4 bit (0x04) is set or value is 0 (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no value change. Setting msDS-SupportedEncryptionTypes=24 on domain root enforces AES128+AES256 only; test all service accounts for AES Kerberos key presence before enforcing to prevent auth breakage.'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'LDAP read — enforcing AES-only (value=24) on domain object affects ALL Kerberos ticket issuance; monitor Event 4769 for RC4 requests before and after enforcement. Roll back by setting value to 0 or adding RC4 bit.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-036' = @{
+        Techniques     = @('T1078.001')
+        TechniqueNames = @('Valid Accounts: Default Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ADUser Guest — check Enabled attribute (read-only AD query)'
+                Destructive = $false
+                Rollback    = 'AD object read — no state change. Disable with Disable-ADAccount -Identity Guest; confirm no application relies on Guest access before disabling.'
+            }
+        )
+        ConfirmationEvents = @(4625,4624)
+        BlastRadius    = 'AD read — disabling Guest is low risk; confirm no legacy systems (NFS, old printers) rely on unauthenticated Guest access first.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-037' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ADUser Administrator — read samAccountName and Enabled via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'AD object read — no account change. Rename samAccountName via Rename-ADObject or Set-ADUser -SamAccountName. Create a honeypot account named "Administrator" with alerting on logon success.'
+            }
+        )
+        ConfirmationEvents = @(4625,4624,4776)
+        BlastRadius    = 'AD read — renaming the built-in Administrator may break legacy scripts or applications that reference it by name; audit usage before renaming.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-038' = @{
+        Techniques     = @('T1098')
+        TechniqueNames = @('Account Manipulation')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ADGroupMember "Schema Admins" — enumerate current members via LDAP (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP group member read — no membership change. Remove all permanent members: Remove-ADGroupMember -Identity "Schema Admins" -Members <list>. Confirm the account has no active schema-change operation before removing.'
+            }
+        )
+        ConfirmationEvents = @(4737,4728,4729)
+        BlastRadius    = 'LDAP read — Schema Admins removal has no immediate operational impact; schema changes require re-adding temporarily. Document the approved member list and run-book for temporary elevation.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-039' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ADUser MSOL_* — read pwdLastSet via LDAP; calculate age (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no password change. Rotate via Entra Connect: run Update-MSOLFederatedDomain or use the Entra Connect wizard Account tab to update credentials — it rotates both on-prem and cloud credentials atomically.'
+            }
+        )
+        ConfirmationEvents = @(4723,4738)
+        BlastRadius    = 'LDAP read — password rotation requires running the Entra Connect update wizard; a failed rotation can interrupt directory synchronization until corrected.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-040' = @{
+        Techniques     = @('T1558.002')
+        TechniqueNames = @('Steal or Forge Kerberos Tickets: Silver Ticket')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-ADComputer AZUREADSSOACC$ — verify presence and read pwdLastSet (read-only LDAP query)'
+                Destructive = $false
+                Rollback    = 'LDAP read — no key change. Rotate via: Update-AzureADSSOForest -OnPremCredentials <cred> -AzureADCredentials <cred>. Rotate every 30 days; document the rotation schedule.'
+            }
+        )
+        ConfirmationEvents = @(4769)
+        BlastRadius    = 'LDAP read — key rotation requires running the Seamless SSO refresh script; brief authentication disruption possible during rotation window (<1 minute). Test on a non-production tenant first.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-041' = @{
+        Techniques     = @('T1552.004')
+        TechniqueNames = @('Unsecured Credentials: Private Keys')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read msDS-RevealOnDemandGroup on RODC computer objects via LDAP — check for Tier 0 group membership (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no PRP change. Remove sensitive groups from msDS-RevealOnDemandGroup using Set-ADObject or ADUC; add them to msDS-NeverRevealGroup instead. Run "repadmin /prp view <RODC> reveal" to audit cached passwords before and after.'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'LDAP read — PRP change takes effect immediately on next RODC sync; accounts removed from reveal set will no longer be cached on the RODC. Verify no Tier 0 admin requires RODC-cached credentials for logon before changing.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'ADC-042' = @{
+        Techniques     = @('T1222.001')
+        TechniqueNames = @('File and Directory Permissions Modification: Windows File and Directory Permissions Modification')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read domain root object DACL and check for Exchange Windows Permissions WriteDACL ACE via DirectoryServices — read-only'
+                Destructive = $false
+                Rollback    = 'DACL read — no ACE modified. Remediate using Microsoft Exchange Health Checker DACL remediation script (HealthChecker.ps1) or manually remove the WriteDACL ACE with Set-Acl / ADSIEDIT. Backup the domain DACL (Get-Acl "AD:$domainDN") before modifying.'
+            }
+        )
+        ConfirmationEvents = @(4662,5136)
+        BlastRadius    = 'DACL read — removing Exchange WriteDACL ACE may break Exchange recipient management operations if Exchange relies on it; test in a lab Exchange environment before removing from production.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'HOST-028' = @{
+        Techniques     = @('T1557')
+        TechniqueNames = @('Adversary-in-the-Middle')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read DisabledComponents: (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters -Name DisabledComponents -EA SilentlyContinue).DisabledComponents — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified. Disable IPv6: set DisabledComponents=0xFF via GPO or registry if not operationally required. Deploy DHCPv6/RA Guard at the network layer as an alternative. Confirm no services (DirectAccess, IPv6-only resources) depend on IPv6 before disabling.'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — disabling IPv6 (0xFF) prevents mitm6 but may break DirectAccess, some clustering features, and IPv6-only DNS resolution. Test on one DC before broad deployment; requires reboot to take effect.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-029' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read LanmanWorkstation RequireSecuritySignature: (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters -Name RequireSecuritySignature -EA SilentlyContinue).RequireSecuritySignature — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified. Set RequireSecuritySignature=1 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Microsoft network client: Digitally sign communications (always). Note: distinct from server-side signing (HOST-012 / LanmanServer).'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — enforcing client signing may cause auth failures to old (pre-Win2000) SMB servers; audit SMB client connections before enforcing.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-030' = @{
+        Techniques     = @('T1003.005')
+        TechniqueNames = @('OS Credential Dumping: Cached Domain Credentials')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read CachedLogonsCount: (Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon -Name CachedLogonsCount -EA SilentlyContinue).CachedLogonsCount — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified. Set to 0 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Interactive Logon: Number of previous logons to cache = 0. DCs do not need cached credentials.'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'Registry read — setting CachedLogonsCount=0 means DC local logon fails when domain is unreachable; acceptable for DCs which should always have domain connectivity.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-031' = @{
+        Techniques     = @('T1557')
+        TechniqueNames = @('Adversary-in-the-Middle')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read Netlogon Parameters: RequireSignOrSeal and SealSecureChannel from HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified. Set both to 1 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > "Domain member: Digitally encrypt or sign secure channel data (always)" and "Domain member: Digitally sign secure channel data (when possible)".'
+            }
+        )
+        ConfirmationEvents = @(5840,5841)
+        BlastRadius    = 'Registry read — enabling Netlogon secure channel may break legacy NT4 BDC communication; not applicable in modern (2003+ DFL) domains. Apply to all DCs simultaneously or use the "when possible" setting first.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'HOST-032' = @{
+        Techniques     = @('T1490')
+        TechniqueNames = @('Inhibit System Recovery')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-Service wbengine; Get-WinEvent -LogName Microsoft-Windows-Backup | Where Id -eq 4 — verify most recent backup date (read-only)'
+                Destructive = $false
+                Rollback    = 'Service query and event log read — no configuration change. Configure Windows Server Backup for system state backup to a UNC path or offline media; verify with wbadmin start systemstatebackup. Test restore in a recovery environment before relying on backup.'
+            }
+        )
+        ConfirmationEvents = @(4,6)
+        BlastRadius    = 'Read-only backup verification — enabling Windows Server Backup system-state backup causes VSS snapshot overhead during backup window; plan backup schedule outside business hours for busy DCs.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'GPO-013' = @{
+        Techniques     = @('T1484.001')
+        TechniqueNames = @('Domain Policy Modification: Group Policy Modification')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read DACL on GPO container objects (CN=<GUID>,CN=Policies,CN=System,...) via DirectoryServices ObjectSecurity — enumerate write ACEs (read-only)'
+                Destructive = $false
+                Rollback    = 'DACL read — no ACE modified. Remove unauthorized write ACEs via Set-GPPermissions or ADSIEDIT. Back up the GPO (Backup-GPO) before modifying its DACL. Review GPO creation audit (Event 5136) to determine when the ACE was added.'
+            }
+        )
+        ConfirmationEvents = @(5136,4662)
+        BlastRadius    = 'DACL read — no modification. Removing a write ACE from a GPO immediately prevents that principal from modifying the GPO; verify the ACE is not intentionally granted before removing.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-014' = @{
+        Techniques     = @('T1078.002')
+        TechniqueNames = @('Valid Accounts: Domain Accounts')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-GPOReport on DC-linked GPOs; search XML for UserRightsAssignment SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight — read-only'
+                Destructive = $false
+                Rollback    = 'GPO XML read — no policy change. Create a GPO linked to the Domain Controllers OU that denies interactive and RDS logon for non-Tier-0 accounts. Test by attempting denied-account logon in a lab before deploying.'
+            }
+        )
+        ConfirmationEvents = @(4625)
+        BlastRadius    = 'GPO read — adding deny-logon rights to the DC OU GPO immediately prevents the denied accounts from logging onto any DC; verify the deny list does not include accounts required for DC admin operations.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'GPO-015' = @{
+        Techniques     = @('T1484.001')
+        TechniqueNames = @('Domain Policy Modification: Group Policy Modification')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read gPLink attribute on all OUs and domain root via LDAP; compare against full GPO GUID list to identify unlinked GPOs — read-only'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no GPO deleted or linked. Review orphaned GPOs with Get-GPOReport; confirm they are no longer needed before deleting with Remove-GPO.'
+            }
+        )
+        ConfirmationEvents = @(5136)
+        BlastRadius    = 'LDAP read — deleting orphaned GPOs is irreversible without a backup; run Backup-GPO on each before deleting. A deleted GPO linked elsewhere (if missed by the scan) would cause an error log on clients.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
+    'AUD-015' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Read AuditReceivingNTLMTraffic: (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0 -Name AuditReceivingNTLMTraffic -EA SilentlyContinue).AuditReceivingNTLMTraffic — read-only'
+                Destructive = $false
+                Rollback    = 'Registry read — no value modified. Set to 2 (audit all) via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Network Security: Restrict NTLM: Audit NTLM authentication in this domain. Events appear in Microsoft-Windows-NTLM/Operational event log (Event 8004).'
+            }
+        )
+        ConfirmationEvents = @(8004)
+        BlastRadius    = 'Registry read — enabling NTLM auditing (value=2) generates Event 8004 for every incoming NTLM authentication on the DC; can be high-volume on busy DCs. Forward logs to SIEM and set adequate log retention before enabling.'
+        MinPriv        = 'LocalAdmin'
+    }
+
+    'DNS-010' = @{
+        Techniques     = @('T1557.001')
+        TechniqueNames = @('Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'Get-DnsServerZone -Name <zone> | Select-Object Aging,NoRefreshInterval,RefreshInterval — verify scavenging state (read-only)'
+                Destructive = $false
+                Rollback    = 'DNS zone property read — no record deleted. Enable scavenging: Set-DnsServerZoneAging -ZoneName <zone> -Aging $true -NoRefreshInterval 7.00:00:00 -RefreshInterval 7.00:00:00; then Set-DnsServerScavenging -ScavengingState $true -ScavengingInterval 7.00:00:00 on the DNS server. Scavenging only removes records whose timestamp has expired past the refresh interval.'
+            }
+        )
+        ConfirmationEvents = @()
+        BlastRadius    = 'DNS zone read — enabling scavenging will tombstone and eventually delete DNS records whose owners have not refreshed within the NoRefresh+Refresh window. Test with a short retention zone first; ensure dynamic-update clients actually refresh records before enabling on a production zone.'
+        MinPriv        = 'DNSAdmin'
+    }
+
+    'ADCS-013' = @{
+        Techniques     = @('T1649')
+        TechniqueNames = @('Steal or Forge Authentication Certificates')
+        AtomicTests    = @(
+            @{
+                Guid        = 'N/A'
+                Name        = 'LDAP filter: (&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192)(userCertificate=*)) — check if any DC computer objects have userCertificate populated (read-only)'
+                Destructive = $false
+                Rollback    = 'LDAP attribute read — no certificate enrolled. Configure auto-enrollment GPO: Computer Configuration > Windows Settings > Security Settings > Public Key Policies > Certificate Services Client - Auto-Enrollment. Ensure the DC Authentication or Domain Controller template is published and DCs have enroll permission.'
+            }
+        )
+        ConfirmationEvents = @(4886,4887)
+        BlastRadius    = 'LDAP read — enabling auto-enrollment causes DCs to request certificates from the CA automatically at next GPO refresh; no manual intervention required. Verify CA capacity and template permissions before enabling.'
+        MinPriv        = 'AnyAuthUser'
+    }
+
 }

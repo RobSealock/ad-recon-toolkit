@@ -102,6 +102,8 @@ $script:_AUD_RemoteScript = {
         ntdsDiagLevel                   = -1           # Field Engineering; -1 = registry not read
         edrProducts                     = @()
         amsiActive                      = $false
+        ntlmAuditEnabled                = $false       # AuditReceivingNTLMTraffic > 0
+        ntlmAuditValue                  = 0
         collectionErrors                = @()
     }
 
@@ -210,6 +212,17 @@ $script:_AUD_RemoteScript = {
         $mpStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
         $result.amsiActive = ($mpStatus -and $mpStatus.AMServiceEnabled -eq $true -and $mpStatus.RealTimeProtectionEnabled -eq $true)
     } catch { $result.collectionErrors += "AMSI: $_" }
+
+    # ── NTLM usage audit (AuditReceivingNTLMTraffic) ───────────────────────────
+    # 0=Disabled, 1=Enable for domain accounts, 2=Enable for all accounts
+    # Without this, NTLM authentication on DCs produces no specific audit events —
+    # making it impossible to baseline NTLMv1 usage before enforcing LmCompatibilityLevel=5.
+    try {
+        $ntlmVal = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+            -Name AuditReceivingNTLMTraffic -ErrorAction SilentlyContinue).AuditReceivingNTLMTraffic
+        $result.ntlmAuditValue   = if ($null -eq $ntlmVal) { 0 } else { [int]$ntlmVal }
+        $result.ntlmAuditEnabled = ($result.ntlmAuditValue -gt 0)
+    } catch { $result.collectionErrors += "NTLMAudit: $_" }
 
     return $result
 }
@@ -498,6 +511,18 @@ function _AUD_EvaluateFindings {
             -Reference 'https://attack.mitre.org/techniques/T1562/002/'))
     }
 
+    # ── AUD-015: NTLM usage audit not enabled ────────────────────────────────
+    # AuditReceivingNTLMTraffic must be > 0 to generate NTLM auth events (Event 8004)
+    # on DCs. Without this, there is no signal to detect NTLMv1 relay/capture or to
+    # safely baseline NTLM usage before enforcing LmCompatibilityLevel=5 (HOST-021).
+    $bad015 = Get-FailingDCs { param($dc) -not $dc.ntlmAuditEnabled }
+    if ($bad015.Count -gt 0) {
+        $findings.Add((New-Finding -Id 'AUD-015' -Severity 'Medium' `
+            -Technique 'T1557.001' `
+            -Description "NTLM usage audit (AuditReceivingNTLMTraffic) is NOT enabled on: $($bad015 -join ', '). Without this, NTLM authentication on DCs is invisible in the event log — no Event 8004 is generated for incoming NTLM auth, making it impossible to detect NTLMv1 relay attacks or to safely baseline NTLM usage before enforcing LmCompatibilityLevel=5. Set via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > 'Network Security: Restrict NTLM: Audit NTLM authentication in this domain' = 'Enable for all accounts' (value 2). Correlate Event 8004 in Microsoft-Windows-NTLM/Operational log." `
+            -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
+    }
+
     return $findings
 }
 
@@ -568,6 +593,8 @@ function _AUDPolicy_Collect {
                 logSizes                         = $ht.logSizes
                 ntdsDiagLevel                    = $ht.ntdsDiagLevel
                 amsiActive                       = $ht.amsiActive
+                ntlmAuditEnabled                 = $ht.ntlmAuditEnabled
+                ntlmAuditValue                   = $ht.ntlmAuditValue
                 edrProducts                      = $ht.edrProducts
                 collectionErrors                 = $ht.collectionErrors
             } `
@@ -612,6 +639,6 @@ function _AUDPolicy_Collect {
 
 Register-Collector `
     -Name        'Audit-Policy' `
-    -Description 'DC audit policy (GUID-keyed auditpol), PS ScriptBlock/cmdline logging, Sysmon config, WEF/WEC SubscriptionManager (AUD-014), log sizes, NTDS diagnostics, EDR presence — with CIS benchmark anchoring and EDR cross-reference' `
+    -Description 'DC audit policy (GUID-keyed auditpol), PS ScriptBlock/cmdline logging, Sysmon config, WEF/WEC SubscriptionManager (AUD-014), NTLM usage audit (AUD-015), log sizes, NTDS diagnostics, EDR presence — with CIS benchmark anchoring and EDR cross-reference' `
     -MinPrivilege 'LocalAdmin' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _AUDPolicy_Collect @PSBoundParameters }

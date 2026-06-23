@@ -22,6 +22,7 @@
 #   ADCS-010  ESC6 — CA has EDITF_ATTRIBUTESUBJECTALTNAME2 flag (request-supplied SAN on any template)
 #   ADCS-011  ESC8 — Web enrollment HTTP endpoint without Extended Protection for Authentication
 #   ADCS-012  Non-default CA in NTAuthCertificates (untrusted CA can issue smartcard-logon certs)
+#   ADCS-013  DC Authentication certificate template published but no DC computer objects are enrolled
 #
 # Review-Required records:
 #   CA:esc12:<ca>   HSM key storage for each CA (manual verification required)
@@ -646,9 +647,32 @@ function _CAConfig_Collect {
     # Build list of known enterprise CA CNs from the discovered CAs for ADCS-012 comparison
     $knownCACNs = @($cas | ForEach-Object { $_.cn })
 
+    # ADCS-013: DC Auth certificate template published but no DC computer objects enrolled
+    Write-Host "         [CA-Config] Checking DC computer certificate enrollment..."
+    $dcAuthTemplateNames = @('DomainController','Domain Controller','DomainControllerAuthentication','Domain Controller Authentication','KerberosAuthentication','Kerberos Authentication')
+    $dcAuthTemplatePublished = ($publishedNames | Where-Object { $dcAuthTemplateNames -contains $_ }).Count -gt 0
+    $dcAuthFinding = $null
+    if ($dcAuthTemplatePublished) {
+        # Check if any DC computer object has a userCertificate attribute populated
+        try {
+            $dcSrch = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$domainDn")
+            $dcSrch.Filter  = '(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192)(userCertificate=*))'
+            $dcSrch.PageSize = 1; $dcSrch.SizeLimit = 1
+            $dcSrch.PropertiesToLoad.Add('cn') | Out-Null
+            $anyCertDC = $dcSrch.FindOne()
+            if (-not $anyCertDC) {
+                $dcAuthFinding = New-Finding -Id 'ADCS-013' -Severity 'Medium' `
+                    -Technique 'T1649' `
+                    -Description "DC Authentication certificate template(s) are published ($($publishedNames | Where-Object { $dcAuthTemplateNames -contains $_ } | Select-Object -First 3 -join ', ')) but NO Domain Controller computer objects have a userCertificate attribute populated. DCs should be enrolled for DC Authentication / Domain Controller certificates to support PKINIT (smart card logon), LDAPS mutual authentication, and certificate-based DC identification. Unenrolled DCs may fail certain authentication flows and cannot be verified via certificate-based means. Verify auto-enrollment GPO is configured for the Domain Controllers OU." `
+                    -Reference 'https://attack.mitre.org/techniques/T1649/'
+            }
+        } catch { Write-Verbose "[CA-Config] DC cert enrollment check failed: $_" }
+    }
+
     # Evaluate findings
     $findings = _CA_EvaluateFindings -CAs $cas -Templates $templates -PublishedTemplateNames $publishedNames `
         -NTAuthCerts $ntAuthCerts -KnownEnterpriseCACNs $knownCACNs
+    if ($dcAuthFinding) { $findings.Add($dcAuthFinding) }
 
     # Locksmith integration
     $lsEnabled = ($Settings['EnableLocksmith'] -ne $false)
@@ -800,6 +824,6 @@ function _CAConfig_Collect {
 
 Register-Collector `
     -Name        'CA-Config' `
-    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC9/ESC15 native evaluation), ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC8 (HTTP enrollment relay), NTAuthCertificates (ADCS-012), Locksmith2 integration (ESC1-ESC16 + provenance), Certipy integration (optional, ESC1-ESC16 primary enumerator), ESC12 review-required per CA' `
+    -Description 'Enumerates AD CS: Enterprise CAs, enrollment endpoints, certificate templates (ESC1-ESC9/ESC15 native evaluation), ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC8 (HTTP enrollment relay), NTAuthCertificates (ADCS-012), DC cert enrollment gap (ADCS-013), Locksmith2 integration (ESC1-ESC16 + provenance), Certipy integration (optional, ESC1-ESC16 primary enumerator), ESC12 review-required per CA' `
     -MinPrivilege 'AnyAuthUser' `
     -Invoke      { param($RunContext, $Settings, $RunRoot) _CAConfig_Collect @PSBoundParameters }
