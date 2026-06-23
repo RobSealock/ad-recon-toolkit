@@ -15,7 +15,7 @@ function _DHCP_GetAuthorizedServers {
     $servers = [System.Collections.Generic.List[string]]::new()
     try {
         $dhcpDn = "CN=NetServices,CN=Services,$ConfigDn"
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$dhcpDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$dhcpDn"))
         $s.Filter   = '(objectClass=dhcpClass)'
         $s.PageSize = 200
         $s.PropertiesToLoad.Add('dhcpServers') | Out-Null
@@ -42,7 +42,7 @@ function _DHCP_Collect {
     $runId   = $RunContext.RunId
 
     try {
-        $rootDse  = [adsi]'LDAP://RootDSE'
+        $rootDse  = (New-AdsiEntry 'LDAP://RootDSE')
         $configDn = $rootDse.configurationNamingContext.ToString()
         $domainFQDN = $RunContext.Domain
 
@@ -72,16 +72,17 @@ function _DHCP_Collect {
             $serverFindings = [System.Collections.Generic.List[object]]::new()
             $scopeData      = [System.Collections.Generic.List[hashtable]]::new()
             Write-Host "         [DHCP] Processing server: $server"
+            $cimArgs = Get-RemoteCimArgs -ComputerName $server
 
             # Check audit logging
             $auditLoggingEnabled = $true
             try {
-                $auditSetting = Get-DhcpServerSetting -ComputerName $server -EA SilentlyContinue
+                $auditSetting = Get-DhcpServerSetting @cimArgs -EA SilentlyContinue
                 if ($auditSetting) {
                     $auditLoggingEnabled = [bool]$auditSetting.IsConflictDetectionEnabled -or $true
                     # DhcpServerSetting does not expose audit logging directly;
                     # check via Get-DhcpServerAuditLog
-                    $auditLog = Get-DhcpServerAuditLog -ComputerName $server -EA SilentlyContinue
+                    $auditLog = Get-DhcpServerAuditLog @cimArgs -EA SilentlyContinue
                     if ($auditLog) {
                         $auditLoggingEnabled = [bool]$auditLog.Enable
                     }
@@ -97,7 +98,7 @@ function _DHCP_Collect {
 
             # Enumerate scopes and check options
             try {
-                $scopes = Get-DhcpServerv4Scope -ComputerName $server -EA SilentlyContinue
+                $scopes = Get-DhcpServerv4Scope @cimArgs -EA SilentlyContinue
                 if ($scopes) {
                     foreach ($scope in $scopes) {
                         $scopeId   = $scope.ScopeId.ToString()
@@ -113,7 +114,7 @@ function _DHCP_Collect {
                         }
 
                         try {
-                            $opts = Get-DhcpServerv4OptionValue -ComputerName $server -ScopeId $scopeId -EA SilentlyContinue
+                            $opts = Get-DhcpServerv4OptionValue @cimArgs -ScopeId $scopeId -EA SilentlyContinue
                             if ($opts) {
                                 $scopeEntry.options = @($opts | ForEach-Object {
                                     @{ optionId=$_.OptionId; name=$_.Name; value=($_.Value -join ', ') }

@@ -87,7 +87,7 @@ function _HostOS_DiscoverTargets {
 
     # Domain Controllers
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter   = '(userAccountControl:1.2.840.113556.1.4.803:=8192)'
         $s.PageSize = 200
         $s.PropertiesToLoad.AddRange([string[]]@('dNSHostName','cn'))
@@ -101,7 +101,7 @@ function _HostOS_DiscoverTargets {
     # CA hosts (Enrollment Services)
     try {
         $caDn = "CN=Enrollment Services,CN=Public Key Services,CN=Services,$ConfigDn"
-        $s    = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$caDn")
+        $s    = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$caDn"))
         $s.Filter      = '(objectClass=pKIEnrollmentService)'
         $s.SearchScope = 'OneLevel'
         $s.PropertiesToLoad.AddRange([string[]]@('dNSHostName','cn'))
@@ -121,7 +121,7 @@ function _HostOS_DiscoverTargets {
     # DHCP servers (authorized servers in NetServices)
     try {
         $dhcpDn = "CN=NetServices,CN=Services,$ConfigDn"
-        $s      = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$dhcpDn")
+        $s      = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$dhcpDn"))
         $s.Filter      = '(objectClass=dhcpClass)'
         $s.SearchScope = 'OneLevel'
         $s.PropertiesToLoad.AddRange([string[]]@('cn'))
@@ -838,7 +838,7 @@ function _HostOS_Collect {
 
     $records   = [System.Collections.Generic.List[object]]::new()
     $runId     = $RunContext.RunId
-    $rootDse   = [adsi]'LDAP://RootDSE'
+    $rootDse   = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn  = $rootDse.defaultNamingContext.ToString()
     $configDn  = $rootDse.configurationNamingContext.ToString()
     $targetsFile = if ($Settings['TargetsFile']) { Join-Path $RunContext.RepoRoot $Settings['TargetsFile'] } else { '' }
@@ -860,8 +860,10 @@ function _HostOS_Collect {
                 $raw = & $script:_HostOS_Script
             } else {
                 # Remote via WinRM
-                $raw = Invoke-Command -ComputerName $fqdn -ScriptBlock $script:_HostOS_Script `
-                    -ErrorAction Stop
+                $icParams = @{ ComputerName = $fqdn; ScriptBlock = $script:_HostOS_Script; ErrorAction = 'Stop' }
+                $remoteCred = Get-RemoteCredential
+                if ($remoteCred) { $icParams.Credential = $remoteCred }
+                $raw = Invoke-Command @icParams
             }
         } catch {
             $records.Add((New-CollectionError -Collector 'Host-OS' `

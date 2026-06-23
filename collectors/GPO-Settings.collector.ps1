@@ -38,7 +38,7 @@ function _GPO_EnumerateFromLDAP {
     $gpos = [System.Collections.Generic.List[hashtable]]::new()
     try {
         $policiesDn = "CN=Policies,CN=System,$DomainDn"
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$policiesDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$policiesDn"))
         $s.Filter      = '(objectClass=groupPolicyContainer)'
         $s.SearchScope = 'OneLevel'
         $s.PageSize    = 200
@@ -218,7 +218,7 @@ function _GPO_GetLinkedGPOs {
     # Returns GUIDs of GPOs linked to a specific DN object (OU or domain)
     $guids = [System.Collections.Generic.List[string]]::new()
     try {
-        $ou = [adsi]"LDAP://$OuDn"
+        $ou = (New-AdsiEntry "LDAP://$OuDn")
         $links = @($ou.Properties['gPLink'])
         foreach ($linkStr in $links) {
             if (-not $linkStr) { continue }
@@ -277,7 +277,7 @@ function _GPO_CheckGPOModificationRights {
                  [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite
     foreach ($guid in $GpoGuids) {
         try {
-            $gpoObj = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=$guid,$policiesDn")
+            $gpoObj = (New-AdsiEntry "LDAP://CN=$guid,$policiesDn")
             foreach ($ace in $gpoObj.psbase.ObjectSecurity.Access) {
                 if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
                 if (-not ($ace.ActiveDirectoryRights -band $dangerous)) { continue }
@@ -309,7 +309,7 @@ function _GPO_FindOrphanedGPOs {
     param([hashtable[]]$AllGpos, [string]$DomainDn)
     $linked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(|(objectClass=organizationalUnit)(objectClass=domainDNS))'
         $s.PageSize = 500; $s.SearchScope = 'Subtree'
         $s.PropertiesToLoad.Add('gPLink') | Out-Null
@@ -322,8 +322,8 @@ function _GPO_FindOrphanedGPOs {
         }
         # Also walk Sites container for site-linked GPOs
         try {
-            $cfgDn = ([adsi]'LDAP://RootDSE').configurationNamingContext.ToString()
-            $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://CN=Sites,$cfgDn")
+            $cfgDn = ((New-AdsiEntry 'LDAP://RootDSE')).configurationNamingContext.ToString()
+            $s2 = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://CN=Sites,$cfgDn"))
             $s2.Filter = '(gPLink=*)'; $s2.PageSize = 200
             $s2.PropertiesToLoad.Add('gPLink') | Out-Null
             $s2.FindAll() | ForEach-Object {
@@ -349,7 +349,7 @@ function _GPO_Collect {
     $runId   = $RunContext.RunId
     $artDir  = Join-Path $RunRoot 'artifacts'
 
-    $rootDse    = [adsi]'LDAP://RootDSE'
+    $rootDse    = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn   = $rootDse.defaultNamingContext.ToString()
     $domainFQDN = $RunContext.Domain
 

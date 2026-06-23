@@ -75,6 +75,37 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 
 ---
 
+## Running against a domain the run host isn't joined to
+
+By default the toolkit uses the run host's own domain membership and the
+current user's Windows identity for every LDAP/WinRM/CIM connection. To
+assess a domain from a host that isn't joined to it, set these in
+`config\settings.local.psd1` (git-ignored — never commit credentials):
+
+| Setting | Default | Effect |
+|---|---|---|
+| `TargetDC` | `''` | Explicit DC hostname or IP to bind against. Non-empty activates remote mode — no separate enable flag |
+| `TargetDomain` | `''` | Target domain FQDN, e.g. `'corp.example.com'`. Required when `TargetDC` is set |
+| `TargetUsername` | `''` | Alternate credential, e.g. `'CORP\svc-assess'` or `'user@corp.example.com'` |
+| `TargetPassword` | `''` | Plaintext — `settings.local.psd1` only |
+
+Cross-domain WinRM (used by the Host-OS and Audit-Policy collectors) can't use
+Kerberos without a trust relationship, so it falls back to NTLM — add the
+target DC to this machine's WinRM trusted hosts first:
+
+```powershell
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value '<TargetDC>' -Concatenate -Force
+```
+
+The toolkit prints a warning at startup if this isn't already configured.
+Note this does not extend to the external tool wrappers (PingCastle,
+SharpHound, Locksmith, Certipy, Group3r, PurpleKnight, HardeningKitty) — they
+pick up the target domain name automatically but each has its own separate
+credential mechanism (Certipy's `CertipyUsername`/`CertipyPassword` above is
+one example) not covered by these settings.
+
+---
+
 ## Optional: Certipy (AD CS / ESC1–ESC16)
 
 Certipy is an optional Python-based AD CS enumerator. When enabled it runs alongside Locksmith and acts as the primary authoritative scanner for certificate template and CA misconfigurations (ESC1–ESC16).

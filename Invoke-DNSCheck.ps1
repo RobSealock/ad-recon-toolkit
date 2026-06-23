@@ -66,7 +66,7 @@ Write-Host '╚═════════════════════�
 Write-Host ''
 
 # ── Framework ─────────────────────────────────────────────────────────────────
-foreach ($module in @('Schema','CollectorRegistry','RunContext','Repository')) {
+foreach ($module in @('Schema','CollectorRegistry','RunContext','Repository','Connection')) {
     . (Join-Path $RepoRoot "framework\$module.ps1")
 }
 
@@ -82,6 +82,7 @@ if (Test-Path $settingsLocalPath) {
 # ── RunContext ─────────────────────────────────────────────────────────────────
 # DNS collector only requires AnyAuthUser — no elevation needed.
 $ctx = New-RunContext -RepoRoot $RepoRoot -HeldPrivileges @('AnyAuthUser') -ExistingRunId $RunId
+Initialize-RemoteConnection -RunContext $ctx -Settings $settings
 
 Write-Host "[DNS Check] RunId    : $($ctx.RunId)"
 Write-Host "[DNS Check] Operator : $($ctx.Operator)"

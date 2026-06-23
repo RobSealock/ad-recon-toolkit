@@ -67,7 +67,7 @@
 
 function _ADC_Searcher {
     param([string]$BaseDn, [string]$Filter, [string[]]$Props, [int]$PageSize = 500, [string]$Scope = 'Subtree')
-    $base    = [adsi]"LDAP://$BaseDn"
+    $base    = (New-AdsiEntry "LDAP://$BaseDn")
     $s       = New-Object System.DirectoryServices.DirectorySearcher($base)
     $s.Filter      = $Filter
     $s.PageSize    = $PageSize
@@ -111,7 +111,7 @@ function _ADC_LargeIntToDate {
 function _ADC_CollectDomainInfo {
     param([string]$DomainDn, $RootDse)
     try {
-        $d   = [adsi]"LDAP://$DomainDn"
+        $d   = (New-AdsiEntry "LDAP://$DomainDn")
         $p   = $d.Properties
 
         # Functional level — msDS-Behavior-Version
@@ -123,7 +123,7 @@ function _ADC_CollectDomainInfo {
         # Tombstone lifetime
         $tsl = try {
             $configDn = $RootDse.configurationNamingContext.ToString()
-            $dir = [adsi]"LDAP://CN=Directory Service,CN=Windows NT,CN=Services,$configDn"
+            $dir = (New-AdsiEntry "LDAP://CN=Directory Service,CN=Windows NT,CN=Services,$configDn")
             if ($dir.Properties['tombstoneLifetime'].Count) { [int]$dir.Properties['tombstoneLifetime'][0] } else { 60 }
         } catch { 60 }
 
@@ -131,7 +131,7 @@ function _ADC_CollectDomainInfo {
         $recycleEnabled = $false
         try {
             $configDn = $RootDse.configurationNamingContext.ToString()
-            $rb = [adsi]"LDAP://CN=Recycle Bin Feature,CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,$configDn"
+            $rb = (New-AdsiEntry "LDAP://CN=Recycle Bin Feature,CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,$configDn")
             $recycleEnabled = ($rb.Properties['enabledScopes'].Count -gt 0)
         } catch {}
 
@@ -168,7 +168,7 @@ function _ADC_CollectForestInfo {
 
         # Forest functional level from Partitions container
         $partsDn  = "CN=Partitions,$configDn"
-        $parts    = [adsi]"LDAP://$partsDn"
+        $parts    = (New-AdsiEntry "LDAP://$partsDn")
         $forestFL = try { [int]$parts.Properties['msDS-Behavior-Version'][0] } catch { -1 }
 
         # Cross-forest trusts
@@ -208,11 +208,11 @@ function _ADC_GetGroupMembers {
     param([string]$GroupDn)
     $members = [System.Collections.Generic.List[hashtable]]::new()
     try {
-        $g   = [adsi]"LDAP://$GroupDn"
+        $g   = (New-AdsiEntry "LDAP://$GroupDn")
         $raw = @($g.Properties['member'])
         foreach ($memberDn in $raw) {
             try {
-                $m   = [adsi]"LDAP://$memberDn"
+                $m   = (New-AdsiEntry "LDAP://$memberDn")
                 $mp  = $m.Properties
                 $uacVal = if ($mp['useraccountcontrol'].Count) { [int]$mp['useraccountcontrol'][0] } else { 0 }
                 $members.Add(@{
@@ -401,7 +401,7 @@ function _ADC_CollectDCSyncRights {
         $replGuids = @($REPL_CHANGES_GUID, $REPL_CHANGES_ALL_GUID, $REPL_CHANGES_FILTERED_GUID)
 
         # Well-known SIDs that legitimately hold replication rights (SID-based, not name-based)
-        $domSid    = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $domSid    = try { (New-Object System.Security.Principal.SecurityIdentifier(((New-AdsiEntry "LDAP://$DomainDn")).objectSid.Value,0)).ToString() } catch { '' }
         $safeREs   = @(
             '^S-1-5-32-544$'                              # BUILTIN\Administrators
             '^S-1-5-18$'                                  # SYSTEM
@@ -410,7 +410,7 @@ function _ADC_CollectDCSyncRights {
             '^S-1-5-9$'                                   # Enterprise Domain Controllers
         )
 
-        $dom   = [adsi]"LDAP://$DomainDn"
+        $dom   = (New-AdsiEntry "LDAP://$DomainDn")
         $sd    = $dom.psbase.ObjectSecurity
         $rules = $sd.Access | Where-Object { $_.ActiveDirectoryRights -match 'ExtendedRight' -and $_.AccessControlType -eq 'Allow' }
         foreach ($rule in $rules) {
@@ -439,7 +439,7 @@ function _ADC_CollectDCSyncRights {
 function _ADC_CollectPasswordPolicy {
     param([string]$DomainDn)
     try {
-        $d = [adsi]"LDAP://$DomainDn"
+        $d = (New-AdsiEntry "LDAP://$DomainDn")
         $p = $d.Properties
         return @{
             minPasswordLength    = _ADC_IntProp $p 'minPwdLength'
@@ -619,12 +619,12 @@ function _ADC_CollectAdminSDHolderDACL {
     $result = @{ dn=''; aces=@(); controlRightFlags=@() }
     try {
         $sdholderDn = "CN=AdminSDHolder,CN=System,$DomainDn"
-        $sdh = [adsi]"LDAP://$sdholderDn"
+        $sdh = (New-AdsiEntry "LDAP://$sdholderDn")
         $sd  = $sdh.psbase.ObjectSecurity
         $result.dn = $sdholderDn
 
         # Well-known Tier-0 SID patterns — principals that legitimately appear here
-        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(((New-AdsiEntry "LDAP://$DomainDn")).objectSid.Value,0)).ToString() } catch { '' }
         $tier0SidPatterns = @(
             '^S-1-5-32-544$'                                      # BUILTIN\Administrators
             '^S-1-5-18$'                                          # SYSTEM
@@ -691,7 +691,7 @@ function _ADC_CollectLAPSReadRights {
             [guid]'ms-Mcs-AdmPwd'       # LAPS v1 (schema attribute name → GUID varies by schema)
         )
 
-        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(([adsi]"LDAP://$DomainDn").objectSid.Value,0)).ToString() } catch { '' }
+        $domSid = try { (New-Object System.Security.Principal.SecurityIdentifier(((New-AdsiEntry "LDAP://$DomainDn")).objectSid.Value,0)).ToString() } catch { '' }
         $tier0Patterns = @(
             '^S-1-5-32-544$'
             '^S-1-5-18$'
@@ -710,7 +710,7 @@ function _ADC_CollectLAPSReadRights {
 
         foreach ($dn in $targets) {
             try {
-                $obj = [adsi]"LDAP://$dn"
+                $obj = (New-AdsiEntry "LDAP://$dn")
                 $sd  = $obj.psbase.ObjectSecurity
                 foreach ($ace in $sd.Access) {
                     # ReadProperty on all properties or on a specific LAPS property
@@ -749,7 +749,7 @@ function _ADC_CollectPrivGroups {
     param([string]$DomainDn, [string]$ForestRootDn)
     $groups = @{}
     $domainSid = try {
-        $d = [adsi]"LDAP://$DomainDn"
+        $d = (New-AdsiEntry "LDAP://$DomainDn")
         (New-Object System.Security.Principal.SecurityIdentifier($d.objectSid.Value, 0)).ToString()
     } catch { '' }
 
@@ -921,7 +921,7 @@ function _ADC_CollectRolePresence {
     function LDAP-Exists {
         param([string]$BaseDn, [string]$Filter, [string[]]$Props)
         try {
-            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$BaseDn")
+            $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$BaseDn"))
             $s.Filter   = $Filter
             $s.PageSize = 10
             $s.SizeLimit= 1
@@ -1018,14 +1018,14 @@ function _ADC_CheckBuiltinAccounts {
     param([string]$DomainDn)
     $result = @{ guestEnabled=$false; adminNotRenamed=$false; adminEnabled=$false }
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(samaccountname=Guest)'
         $s.PropertiesToLoad.AddRange([string[]]@('useraccountcontrol'))
         $s.SizeLimit = 1
         $g = $s.FindOne()
         if ($g) { $result.guestEnabled = -not ([int]$g.Properties['useraccountcontrol'][0] -band 0x02) }
 
-        $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s2 = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s2.Filter = '(samaccountname=Administrator)'
         $s2.PropertiesToLoad.AddRange([string[]]@('useraccountcontrol'))
         $s2.SizeLimit = 1
@@ -1043,13 +1043,13 @@ function _ADC_CheckLAPSDeployment {
     $result = @{ schemaPresent=$false; lapsVersion='none'; anyComputerEnrolled=$false }
     try {
         $lapsV1 = $false; $lapsV2 = $false
-        try { $v1 = [adsi]"LDAP://CN=ms-Mcs-AdmPwd,$SchemaDn"; $lapsV1 = ($v1 -and $v1.Properties['cn'].Count -gt 0) } catch {}
-        try { $v2 = [adsi]"LDAP://CN=msLAPS-Password,$SchemaDn"; $lapsV2 = ($v2 -and $v2.Properties['cn'].Count -gt 0) } catch {}
+        try { $v1 = (New-AdsiEntry "LDAP://CN=ms-Mcs-AdmPwd,$SchemaDn"); $lapsV1 = ($v1 -and $v1.Properties['cn'].Count -gt 0) } catch {}
+        try { $v2 = (New-AdsiEntry "LDAP://CN=msLAPS-Password,$SchemaDn"); $lapsV2 = ($v2 -and $v2.Properties['cn'].Count -gt 0) } catch {}
         $result.schemaPresent = $lapsV1 -or $lapsV2
         $result.lapsVersion   = if ($lapsV2) { 'v2' } elseif ($lapsV1) { 'v1' } else { 'none' }
         if ($result.schemaPresent) {
             $attr = if ($lapsV2) { 'msLAPS-PasswordExpirationTime' } else { 'ms-Mcs-AdmPwdExpirationTime' }
-            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+            $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
             $s.Filter = "(&(objectCategory=computer)($attr=*))"; $s.PageSize = 1; $s.SizeLimit = 1
             $s.PropertiesToLoad.Add('cn') | Out-Null
             $result.anyComputerEnrolled = ($null -ne $s.FindOne())
@@ -1062,7 +1062,7 @@ function _ADC_CheckKerberosEncryption {
     param([string]$DomainDn)
     # Bits: 1=DES-CRC, 2=DES-MD5, 4=RC4-HMAC, 8=AES128, 16=AES256; 0/absent = OS default (RC4 allowed)
     try {
-        $d = [adsi]"LDAP://$DomainDn"
+        $d = (New-AdsiEntry "LDAP://$DomainDn")
         $enc = try { [int]$d.Properties['msDS-SupportedEncryptionTypes'][0] } catch { 0 }
         return @{ encryptionTypes=$enc; rc4Allowed=[bool](($enc -eq 0) -or ($enc -band 0x04)) }
     } catch { return @{ encryptionTypes=0; rc4Allowed=$true } }
@@ -1072,7 +1072,7 @@ function _ADC_CollectEntraHybrid {
     param([string]$DomainDn)
     $result = @{ hasSyncAccount=$false; syncAccountName=''; syncAccountPwdAgeDays=-1; hasSsoComputer=$false }
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(&(objectClass=user)(|(samaccountname=MSOL_*)(samaccountname=AZUREAD_*)))'
         $s.PropertiesToLoad.AddRange([string[]]@('samaccountname','pwdlastset')); $s.SizeLimit = 1
         $sync = $s.FindOne()
@@ -1082,7 +1082,7 @@ function _ADC_CollectEntraHybrid {
             $raw = if ($sync.Properties['pwdlastset'].Count) { [long]$sync.Properties['pwdlastset'][0] } else { 0 }
             if ($raw -gt 0) { $result.syncAccountPwdAgeDays = [int]((Get-Date) - [datetime]::FromFileTime($raw)).TotalDays }
         }
-        $s2 = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s2 = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s2.Filter = '(samaccountname=AZUREADSSOACC$)'; $s2.PropertiesToLoad.Add('cn') | Out-Null; $s2.SizeLimit = 1
         $result.hasSsoComputer = ($null -ne $s2.FindOne())
     } catch { Write-Verbose "[AD-Core] Entra hybrid check failed: $_" }
@@ -1093,7 +1093,7 @@ function _ADC_CollectRODCPRP {
     param([string]$DomainDn)
     $issues = [System.Collections.Generic.List[hashtable]]::new()
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter  = '(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))'
         $s.PageSize = 100
         $s.PropertiesToLoad.AddRange([string[]]@('cn','msDS-RevealOnDemandGroup'))
@@ -1114,13 +1114,13 @@ function _ADC_CheckExchangeDACL {
     param([string]$DomainDn)
     $result = @{ exchangeWriteDacl=$false; exchangeGroupDn='' }
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(samaccountname=Exchange Windows Permissions)'
         $s.PropertiesToLoad.Add('distinguishedname') | Out-Null; $s.SizeLimit = 1
         $exGrp = $s.FindOne()
         if (-not $exGrp) { return $result }
         $result.exchangeGroupDn = $exGrp.Properties['distinguishedname'][0].ToString()
-        $domObj = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$DomainDn")
+        $domObj = (New-AdsiEntry "LDAP://$DomainDn")
         foreach ($ace in $domObj.psbase.ObjectSecurity.Access) {
             if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
             $trustee = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.IdentityReference.Value }
@@ -1140,7 +1140,7 @@ function _ADCore_Collect {
     $records  = [System.Collections.Generic.List[object]]::new()
     $runId    = $RunContext.RunId
 
-    $rootDse    = [adsi]'LDAP://RootDSE'
+    $rootDse    = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn   = $rootDse.defaultNamingContext.ToString()
     $configDn   = $rootDse.configurationNamingContext.ToString()
     $domainFQDN = $RunContext.Domain
@@ -1430,7 +1430,7 @@ function _ADCore_Collect {
     # Its presence grants broad read access to AD objects without explicit ACEs.
     $preWin2kDn = "CN=Pre-Windows 2000 Compatible Access,CN=Builtin,$domainDn"
     try {
-        $preWin2kGrp = [adsi]"LDAP://$preWin2kDn"
+        $preWin2kGrp = (New-AdsiEntry "LDAP://$preWin2kDn")
         $memberSids = @($preWin2kGrp.Properties['member'] | ForEach-Object { $_.ToString() })
         $broad = $memberSids | Where-Object { $_ -match 'Everyone|Authenticated Users|World|S-1-1-0|S-1-5-11' }
         if ($broad.Count -gt 0) {

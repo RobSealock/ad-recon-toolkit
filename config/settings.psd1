@@ -40,4 +40,14 @@
     # Offline mode
     # Set to $true to skip all downloads (binaries and KEV must be pre-staged).
     OfflineMode         = $false
+
+    # Remote / cross-domain assessment
+    # Run from a host that is NOT joined to the target domain by pointing
+    # directly at a DC and supplying alternate credentials. Leave TargetDC
+    # empty to use the current host's implicit domain membership (default).
+    # Set these in settings.local.psd1 (git-ignored), not here.
+    TargetDC            = ''   # explicit DC hostname or IP — non-empty activates remote mode
+    TargetDomain        = ''   # target domain FQDN, e.g. 'corp.example.com' — required when TargetDC is set
+    TargetUsername      = ''   # e.g. 'CORP\svc-assess' or 'user@corp.example.com'
+    TargetPassword      = ''   # plaintext — settings.local.psd1 only
 }

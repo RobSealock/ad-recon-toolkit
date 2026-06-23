@@ -235,7 +235,7 @@ function _AUD_DiscoverDCs {
     param([string]$DomainDn)
     $dcs = [System.Collections.Generic.List[string]]::new()
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter   = '(userAccountControl:1.2.840.113556.1.4.803:=8192)'
         $s.PageSize = 200
         $s.PropertiesToLoad.AddRange([string[]]@('dNSHostName'))
@@ -261,9 +261,15 @@ function _AUD_CollectFromDC {
             # Local execution (run host IS the DC)
             $data = & $script:_AUD_RemoteScript -EdrServiceNames $edrNames
         } else {
-            $data = Invoke-Command -ComputerName $FQDN -ErrorAction Stop `
-                -ScriptBlock $script:_AUD_RemoteScript `
-                -ArgumentList @(,$edrNames)
+            $icParams = @{
+                ComputerName = $FQDN
+                ErrorAction  = 'Stop'
+                ScriptBlock  = $script:_AUD_RemoteScript
+                ArgumentList = @(,$edrNames)
+            }
+            $remoteCred = Get-RemoteCredential
+            if ($remoteCred) { $icParams.Credential = $remoteCred }
+            $data = Invoke-Command @icParams
         }
         return $data
     } catch {
@@ -537,7 +543,7 @@ function _AUDPolicy_Collect {
     $runId     = $RunContext.RunId
     $domainFQDN= $RunContext.Domain
 
-    $rootDse  = [adsi]'LDAP://RootDSE'
+    $rootDse  = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn = $rootDse.defaultNamingContext.ToString()
 
     # ── Discover DCs ──────────────────────────────────────────────────────────

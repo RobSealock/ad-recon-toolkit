@@ -23,7 +23,7 @@ function _DNS_GetComputerNames {
     param([string]$DomainDn)
     $names = [System.Collections.Generic.HashSet[string]]([System.StringComparer]::OrdinalIgnoreCase)
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter   = '(objectClass=computer)'
         $s.PageSize = 1000
         $s.PropertiesToLoad.AddRange([string[]]@('sAMAccountName','dNSHostName','cn'))
@@ -47,7 +47,7 @@ function _DNS_EnumerateZones {
     $partitionDn = "DC=$Partition,$DomainDn"
     $containerDn = "CN=MicrosoftDNS,$partitionDn"
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$containerDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$containerDn"))
         $s.Filter      = '(objectClass=dnsZone)'
         $s.SearchScope = 'OneLevel'
         $s.PageSize    = 500
@@ -68,7 +68,7 @@ function _DNS_GetZoneNodes {
     param([string]$ZoneDn)
     $nodes = [System.Collections.Generic.List[hashtable]]::new()
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$ZoneDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$ZoneDn"))
         $s.Filter      = '(objectClass=dnsNode)'
         $s.SearchScope = 'OneLevel'
         $s.PageSize    = 2000
@@ -95,7 +95,8 @@ function _DNS_GetZoneDynamicUpdate {
     # Try DnsServer module; fall back to 'unknown'
     try {
         if (Get-Command Get-DnsServerZone -ErrorAction SilentlyContinue) {
-            $z = Get-DnsServerZone -Name $ZoneName -ComputerName $DnsServer -ErrorAction Stop
+            $cimArgs = Get-RemoteCimArgs -ComputerName $DnsServer
+            $z = Get-DnsServerZone -Name $ZoneName @cimArgs -ErrorAction Stop
             return $z.DynamicUpdate   # None | Secure | NonsecureAndSecure
         }
     } catch {}
@@ -111,7 +112,7 @@ function _DNS_CollectZoneWriteRights {
     try {
         $domSid = try {
             (New-Object System.Security.Principal.SecurityIdentifier(
-                ([adsi]"LDAP://$DomainDn").objectSid.Value, 0)).ToString()
+                ((New-AdsiEntry "LDAP://$DomainDn")).objectSid.Value, 0)).ToString()
         } catch { '' }
 
         $tier0Patterns = @(
@@ -135,7 +136,7 @@ function _DNS_CollectZoneWriteRights {
         $checkDACL = {
             param([string]$Dn, [string]$Scope)
             try {
-                $obj = [adsi]"LDAP://$Dn"
+                $obj = (New-AdsiEntry "LDAP://$Dn")
                 $sd  = $obj.psbase.ObjectSecurity
                 foreach ($ace in $sd.Access) {
                     if ($ace.AccessControlType -ne 'Allow') { continue }
@@ -163,7 +164,7 @@ function _DNS_CollectZoneWriteRights {
             & $checkDACL -Dn $containerDn -Scope "MicrosoftDNS-container ($part)"
 
             # Also check each zone object directly
-            $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$containerDn")
+            $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$containerDn"))
             $s.Filter      = '(objectClass=dnsZone)'
             $s.SearchScope = 'OneLevel'
             $s.PageSize    = 100
@@ -182,7 +183,7 @@ function _DNS_GetDnsAdmins {
     param([string]$DomainDn)
     $members = [System.Collections.Generic.List[string]]::new()
     try {
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$DomainDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(&(objectClass=group)(sAMAccountName=DnsAdmins))'
         $s.PropertiesToLoad.Add('member') | Out-Null
         $result = $s.FindOne()
@@ -212,7 +213,7 @@ function _DNS_Collect {
     $runId    = $RunContext.RunId
     $cutoff24h= (Get-Date).AddHours(-24).ToUniversalTime()
 
-    $rootDse  = [adsi]'LDAP://RootDSE'
+    $rootDse  = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn = $rootDse.defaultNamingContext.ToString()
     $dnsServer= $RunContext.Domain   # use domain name; DnsServer module resolves to a DC
 
@@ -324,7 +325,8 @@ function _DNS_Collect {
 
             # DNS-008: Zone transfer restriction; DNS-010: Scavenging not configured
             try {
-                $dnsZone = Get-DnsServerZone -Name $zoneName -ComputerName $dnsServer -EA SilentlyContinue
+                $cimArgs = Get-RemoteCimArgs -ComputerName $dnsServer
+                $dnsZone = Get-DnsServerZone -Name $zoneName @cimArgs -EA SilentlyContinue
                 if ($dnsZone) {
                     if ($dnsZone.SecureSecondaries -eq 'NoSecureSecondaries') {
                         $zoneFindings.Add((New-Finding -Id 'DNS-008' -Severity 'High' `
@@ -368,7 +370,8 @@ function _DNS_Collect {
 
         # DNS-009: External forwarders
         try {
-            $forwarders = Get-DnsServerForwarder -ComputerName $dnsServer -EA SilentlyContinue
+            $cimArgs = Get-RemoteCimArgs -ComputerName $dnsServer
+            $forwarders = Get-DnsServerForwarder @cimArgs -EA SilentlyContinue
             if ($forwarders -and $forwarders.IPAddress) {
                 $publicForwarders = @($forwarders.IPAddress | Where-Object {
                     $ip = $_.ToString()

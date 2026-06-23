@@ -55,7 +55,7 @@ $script:_CA_CTFLAG_SUBJECT_REQUIRE_COMMON_NAME = 0x40000000
 function _CA_GetDomainSid {
     param([string]$DomainDn)
     try {
-        $dn = [adsi]"LDAP://$DomainDn"
+        $dn = (New-AdsiEntry "LDAP://$DomainDn")
         $sidBytes = $dn.objectSid.Value
         return (New-Object System.Security.Principal.SecurityIdentifier($sidBytes, 0)).ToString()
     } catch { return $null }
@@ -105,7 +105,7 @@ function _CA_EnumerateCAs {
     $cas = [System.Collections.Generic.List[hashtable]]::new()
     try {
         $enrollDn = "CN=Enrollment Services,CN=Public Key Services,CN=Services,$ConfigDn"
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$enrollDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$enrollDn"))
         $s.Filter      = '(objectClass=pKIEnrollmentService)'
         $s.SearchScope = 'OneLevel'
         $s.PropertiesToLoad.AddRange([string[]]@(
@@ -170,7 +170,7 @@ function _CA_EnumerateTemplates {
     $templates = [System.Collections.Generic.List[hashtable]]::new()
     try {
         $tmplDn = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigDn"
-        $s = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$tmplDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$tmplDn"))
         $s.Filter      = '(objectClass=pKICertificateTemplate)'
         $s.SearchScope = 'OneLevel'
         $s.PageSize    = 200
@@ -254,7 +254,7 @@ function _CA_CheckNTAuthCertificates {
     try {
         # NTAuthCertificates container stores DER-encoded certificates of CAs trusted for smart card logon
         $ntauthDn = "CN=NTAuthCertificates,CN=Public Key Services,CN=Services,$ConfigDn"
-        $ntauth    = [adsi]"LDAP://$ntauthDn"
+        $ntauth    = (New-AdsiEntry "LDAP://$ntauthDn")
         $certs     = @($ntauth.Properties['cACertificate'])
         foreach ($certBytes in $certs) {
             try {
@@ -618,7 +618,7 @@ function _CAConfig_Collect {
     $runId      = $RunContext.RunId
     $artDir     = Join-Path $RunRoot 'artifacts'
 
-    $rootDse    = [adsi]'LDAP://RootDSE'
+    $rootDse    = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn   = $rootDse.defaultNamingContext.ToString()
     $configDn   = $rootDse.configurationNamingContext.ToString()
     $domainFQDN = $RunContext.Domain
@@ -655,7 +655,7 @@ function _CAConfig_Collect {
     if ($dcAuthTemplatePublished) {
         # Check if any DC computer object has a userCertificate attribute populated
         try {
-            $dcSrch = New-Object System.DirectoryServices.DirectorySearcher([adsi]"LDAP://$domainDn")
+            $dcSrch = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$domainDn"))
             $dcSrch.Filter  = '(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192)(userCertificate=*))'
             $dcSrch.PageSize = 1; $dcSrch.SizeLimit = 1
             $dcSrch.PropertiesToLoad.Add('cn') | Out-Null

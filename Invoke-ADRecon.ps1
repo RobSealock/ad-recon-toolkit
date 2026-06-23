@@ -32,9 +32,11 @@ param(
 $ErrorActionPreference = 'Continue'
 
 # Load framework modules (idempotent — functions are just redefined if already loaded)
-foreach ($module in @('Schema','CollectorRegistry','RunContext','Repository')) {
+foreach ($module in @('Schema','CollectorRegistry','RunContext','Repository','Connection')) {
     . (Join-Path $PSScriptRoot "framework\$module.ps1")
 }
+
+Initialize-RemoteConnection -RunContext $RunContext -Settings $Settings
 
 # Register all collectors found in the collectors directory
 Get-ChildItem -Path $CollectorsPath -Filter '*.collector.ps1' -ErrorAction Stop |
