@@ -63,8 +63,8 @@ $script:_HostOS_UnexpectedDCRoles = @(
 # ── Identities that are NOT flagged for HOST-002 (expected service accounts) ──
 $script:_HostOS_SafeServiceAccounts = @(
     'LocalSystem','NT AUTHORITY\SYSTEM',
-    'LocalService','NT AUTHORITY\LOCAL SERVICE',
-    'NetworkService','NT AUTHORITY\NETWORK SERVICE',
+    'LocalService','NT AUTHORITY\LocalService',
+    'NetworkService','NT AUTHORITY\NetworkService',
     'NT SERVICE\*'
 )
 
@@ -474,7 +474,7 @@ function _HostOS_EvaluateFindings {
 
     $findings = [System.Collections.Generic.List[object]]::new()
     $s        = $Raw.sections
-    $host     = $Target.FQDN
+    $hostName     = $Target.FQDN
     $isDC     = $Target.Roles -contains 'DomainController'
 
     # HOST-001 Unexpected roles on DC
@@ -483,7 +483,7 @@ function _HostOS_EvaluateFindings {
             if ($s.roles -contains $role) {
                 $findings.Add((New-Finding -Id 'HOST-001' -Severity 'High' `
                     -Technique 'T1072' `
-                    -Description "Unexpected role '$role' is installed on DC $host. DCs should have only AD DS, DNS, and minimal required roles." `
+                    -Description "Unexpected role '$role' is installed on DC $hostName. DCs should have only AD DS, DNS, and minimal required roles." `
                     -Reference 'https://attack.mitre.org/techniques/T1072/'))
             }
         }
@@ -501,7 +501,7 @@ function _HostOS_EvaluateFindings {
             if (-not $isSafe -and $account -match '\\') {
                 $findings.Add((New-Finding -Id 'HOST-002' -Severity 'Medium' `
                     -Technique 'T1543.003' `
-                    -Description "Service '$($svc.name)' on $host runs as '$account' (domain account). If this account has elevated AD privileges it is a lateral-movement risk. Cross-reference with AD service account inventory." `
+                    -Description "Service '$($svc.name)' on $hostName runs as '$account' (domain account). If this account has elevated AD privileges it is a lateral-movement risk. Cross-reference with AD service account inventory." `
                     -Reference 'https://attack.mitre.org/techniques/T1543/003/'))
             }
         }
@@ -516,7 +516,7 @@ function _HostOS_EvaluateFindings {
                 if ($path -notmatch '(?i)^(C:\\Windows\\|C:\\Program Files\\Windows )') {
                     $findings.Add((New-Finding -Id 'HOST-003' -Severity 'Medium' `
                         -Technique 'T1574.009' `
-                        -Description "Service '$($svc.name)' on $host has an unquoted binary path containing spaces: '$path'. An attacker with write access to an intermediate directory can plant a malicious executable." `
+                        -Description "Service '$($svc.name)' on $hostName has an unquoted binary path containing spaces: '$path'. An attacker with write access to an intermediate directory can plant a malicious executable." `
                         -Reference 'https://attack.mitre.org/techniques/T1574/009/'))
                 }
             }
@@ -531,7 +531,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and $fl.printSpoolerRunning) {
             $findings.Add((New-Finding -Id 'HOST-004' -Severity 'High' `
                 -Technique 'T1187' `
-                -Description "Print Spooler service is RUNNING on DC $host. Exposes PrinterBug (SpoolSample) coercion — an attacker can force the DC to authenticate to an arbitrary host, enabling credential relay or unconstrained delegation abuse." `
+                -Description "Print Spooler service is RUNNING on DC $hostName. Exposes PrinterBug (SpoolSample) coercion — an attacker can force the DC to authenticate to an arbitrary host, enabling credential relay or unconstrained delegation abuse." `
                 -Reference 'https://attack.mitre.org/techniques/T1187/'))
         }
 
@@ -539,7 +539,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.webClientRunning) {
             $findings.Add((New-Finding -Id 'HOST-005' -Severity 'High' `
                 -Technique 'T1187' `
-                -Description "WebClient (WebDAV) service is RUNNING on $host. Enables HTTP-based NTLM relay and is an ESC8 (AD CS web enrollment relay) attack enabler." `
+                -Description "WebClient (WebDAV) service is RUNNING on $hostName. Enables HTTP-based NTLM relay and is an ESC8 (AD CS web enrollment relay) attack enabler." `
                 -Reference 'https://attack.mitre.org/techniques/T1187/'))
         }
 
@@ -547,7 +547,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.smb1Enabled) {
             $findings.Add((New-Finding -Id 'HOST-006' -Severity 'Critical' `
                 -Technique 'T1210' `
-                -Description "SMBv1 is ENABLED on $host. SMBv1 is exploited by EternalBlue (MS17-010) and related exploits. Disable immediately." `
+                -Description "SMBv1 is ENABLED on $hostName. SMBv1 is exploited by EternalBlue (MS17-010) and related exploits. Disable immediately." `
                 -Reference 'https://attack.mitre.org/techniques/T1210/'))
         }
 
@@ -555,7 +555,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.rdpEnabled -and -not $fl.rdpNLARequired) {
             $findings.Add((New-Finding -Id 'HOST-007' -Severity 'Medium' `
                 -Technique 'T1021.001' `
-                -Description "RDP is enabled on $host without Network Level Authentication (NLA). Unauthenticated users reach the login screen — enables credential spraying and BlueKeep-class pre-auth exploits." `
+                -Description "RDP is enabled on $hostName without Network Level Authentication (NLA). Unauthenticated users reach the login screen — enables credential spraying and BlueKeep-class pre-auth exploits." `
                 -Reference 'https://attack.mitre.org/techniques/T1021/001/'))
         }
 
@@ -563,7 +563,7 @@ function _HostOS_EvaluateFindings {
         if (-not $fl.lsaRunAsPPL) {
             $findings.Add((New-Finding -Id 'HOST-008' -Severity 'High' `
                 -Technique 'T1003.001' `
-                -Description "LSA Protection (RunAsPPL) is NOT enabled on $host. LSASS is not a Protected Process — credential dumping tools (Mimikatz, ProcDump) can read LSASS memory without a kernel driver." `
+                -Description "LSA Protection (RunAsPPL) is NOT enabled on $hostName. LSASS is not a Protected Process — credential dumping tools (Mimikatz, ProcDump) can read LSASS memory without a kernel driver." `
                 -Reference 'https://attack.mitre.org/techniques/T1003/001/'))
         }
 
@@ -571,7 +571,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.wdigestCaching) {
             $findings.Add((New-Finding -Id 'HOST-009' -Severity 'Critical' `
                 -Technique 'T1003.001' `
-                -Description "WDigest credential caching is ENABLED on $host (UseLogonCredential=1). Plaintext passwords are stored in LSASS memory and retrievable by Mimikatz sekurlsa::wdigest." `
+                -Description "WDigest credential caching is ENABLED on $hostName (UseLogonCredential=1). Plaintext passwords are stored in LSASS memory and retrievable by Mimikatz sekurlsa::wdigest." `
                 -Reference 'https://attack.mitre.org/techniques/T1003/001/'))
         }
 
@@ -579,7 +579,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.lapsVersion -eq 'none') {
             $findings.Add((New-Finding -Id 'HOST-010' -Severity 'Medium' `
                 -Technique 'T1078.003' `
-                -Description "LAPS is NOT deployed on $host. The local Administrator password is unmanaged — likely shared or static across machines (pass-the-hash lateral movement risk)." `
+                -Description "LAPS is NOT deployed on $hostName. The local Administrator password is unmanaged — likely shared or static across machines (pass-the-hash lateral movement risk)." `
                 -Reference 'https://attack.mitre.org/techniques/T1078/003/'))
         }
 
@@ -588,7 +588,7 @@ function _HostOS_EvaluateFindings {
             $sev = if ($fl.ldapSigning -eq 0) { 'Critical' } else { 'High' }
             $findings.Add((New-Finding -Id 'HOST-011' -Severity $sev `
                 -Technique 'T1557.001' `
-                -Description "LDAP signing is not REQUIRED on DC $host (current level: $($fl.ldapSigning) — 0=None, 1=Negotiate, 2=Required). Enables LDAP relay attacks (e.g., ntlmrelayx to ldap://)." `
+                -Description "LDAP signing is not REQUIRED on DC $hostName (current level: $($fl.ldapSigning) — 0=None, 1=Negotiate, 2=Required). Enables LDAP relay attacks (e.g., ntlmrelayx to ldap://)." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
@@ -596,7 +596,7 @@ function _HostOS_EvaluateFindings {
         if (-not $fl.smbSigningRequired) {
             $findings.Add((New-Finding -Id 'HOST-012' -Severity 'High' `
                 -Technique 'T1557.001' `
-                -Description "SMB signing is not REQUIRED on $host. Enables SMB relay attacks — captured NTLM authentication can be relayed to this host." `
+                -Description "SMB signing is not REQUIRED on $hostName. Enables SMB relay attacks — captured NTLM authentication can be relayed to this host." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
@@ -607,7 +607,7 @@ function _HostOS_EvaluateFindings {
             if ($fl.nbtNSEnabled)  { $proto += 'NBT-NS' }
             $findings.Add((New-Finding -Id 'HOST-013' -Severity 'High' `
                 -Technique 'T1557.001' `
-                -Description "$($proto -join ' and ') is enabled on $host. Enables name-poisoning attacks (Responder) to capture NTLMv2 hashes from any machine on the subnet." `
+                -Description "$($proto -join ' and ') is enabled on $hostName. Enables name-poisoning attacks (Responder) to capture NTLMv2 hashes from any machine on the subnet." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
@@ -615,7 +615,7 @@ function _HostOS_EvaluateFindings {
         if ($fl.localAdminEnabled -and $fl.localAdminPwdAgeDays -gt 90) {
             $findings.Add((New-Finding -Id 'HOST-014' -Severity 'Medium' `
                 -Technique 'T1078.003' `
-                -Description "Local Administrator is ENABLED on $host with password last set $($fl.localAdminPwdAgeDays) days ago. LAPS may not be managing this account (LAPS: $($fl.lapsVersion))." `
+                -Description "Local Administrator is ENABLED on $hostName with password last set $($fl.localAdminPwdAgeDays) days ago. LAPS may not be managing this account (LAPS: $($fl.lapsVersion))." `
                 -Reference 'https://attack.mitre.org/techniques/T1078/003/'))
         }
     }
@@ -629,7 +629,7 @@ function _HostOS_EvaluateFindings {
                     if ($ace.rights -in @('Change','Full')) {
                         $findings.Add((New-Finding -Id 'HOST-015' -Severity 'High' `
                             -Technique 'T1039' `
-                            -Description "Share '$($share.name)' ($($share.path)) on $host grants '$($ace.rights)' to '$($ace.account)'. Broad write access enables data staging and potential code execution." `
+                            -Description "Share '$($share.name)' ($($share.path)) on $hostName grants '$($ace.rights)' to '$($ace.account)'. Broad write access enables data staging and potential code execution." `
                             -Reference 'https://attack.mitre.org/techniques/T1039/'))
                     }
                 }
@@ -645,7 +645,7 @@ function _HostOS_EvaluateFindings {
                 if ($task.runLevel -eq 'Highest') {
                     $findings.Add((New-Finding -Id 'HOST-016' -Severity 'Medium' `
                         -Technique 'T1053.005' `
-                        -Description "Scheduled task '$($task.name)' on $host runs as '$runAs' at highest privilege. If the task script/binary is writable, this is a privilege escalation path." `
+                        -Description "Scheduled task '$($task.name)' on $hostName runs as '$runAs' at highest privilege. If the task script/binary is writable, this is a privilege escalation path." `
                         -Reference 'https://attack.mitre.org/techniques/T1053/005/'))
                 }
             }
@@ -662,7 +662,7 @@ function _HostOS_EvaluateFindings {
             $mode = if ($sf.dsrmLogonBehavior -ge 2) { 'network logon always allowed (value=2)' } else { 'logon allowed when AD services stopped (value=1)' }
             $findings.Add((New-Finding -Id 'HOST-017' -Severity $sev `
                 -Technique 'T1078.002' `
-                -Description "DSRM admin logon behavior on DC $host is set to $mode. The DSRM local Administrator account has a separate password that survives domain-wide password resets. Value 0 (default) is the only safe setting: DSRM login restricted to Directory Services Restore Mode only. An attacker who has extracted the DSRM hash (via secretsdump or NTDS backup) can use value 2 to authenticate to the DC over the network as local Administrator indefinitely." `
+                -Description "DSRM admin logon behavior on DC $hostName is set to $mode. The DSRM local Administrator account has a separate password that survives domain-wide password resets. Value 0 (default) is the only safe setting: DSRM login restricted to Directory Services Restore Mode only. An attacker who has extracted the DSRM hash (via secretsdump or NTDS backup) can use value 2 to authenticate to the DC over the network as local Administrator indefinitely." `
                 -Reference 'https://attack.mitre.org/techniques/T1078/002/'))
         }
 
@@ -672,7 +672,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and $sf.efsServiceRunning) {
             $findings.Add((New-Finding -Id 'HOST-018' -Severity 'Medium' `
                 -Technique 'T1187' `
-                -Description "EFS (Encrypting File System) service is running on DC $host. The MS-EFSRPC interface (used by EFS) is the coercion vector for PetitPotam — an unauthenticated attacker can trigger the DC to authenticate outbound to any host, enabling NTLM relay to ADCS (ESC8) or other relay targets. EFS provides no operational value on a DC. Recommended: disable the EFS service on all DCs. Note: patched Windows servers may block unauthenticated PetitPotam but the authenticated variant remains viable." `
+                -Description "EFS (Encrypting File System) service is running on DC $hostName. The MS-EFSRPC interface (used by EFS) is the coercion vector for PetitPotam — an unauthenticated attacker can trigger the DC to authenticate outbound to any host, enabling NTLM relay to ADCS (ESC8) or other relay targets. EFS provides no operational value on a DC. Recommended: disable the EFS service on all DCs. Note: patched Windows servers may block unauthenticated PetitPotam but the authenticated variant remains viable." `
                 -Reference 'https://attack.mitre.org/techniques/T1187/'))
         }
 
@@ -681,7 +681,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and $sf.dfsNamespaceRunning) {
             $findings.Add((New-Finding -Id 'HOST-019' -Severity 'Medium' `
                 -Technique 'T1187' `
-                -Description "DFS Namespace service (Dfs) is running on DC $host. The MS-DFSNM RPC interface is the coercion vector for DFSCoerce — an authenticated attacker can trigger the DC to authenticate to an arbitrary SMB listener, enabling NTLM relay attacks (to ADCS, another DC, or any service not requiring signing). Recommended: disable DFS Namespace on DCs that are not serving DFS namespaces; enable SMB signing and EPA on all relay targets." `
+                -Description "DFS Namespace service (Dfs) is running on DC $hostName. The MS-DFSNM RPC interface is the coercion vector for DFSCoerce — an authenticated attacker can trigger the DC to authenticate to an arbitrary SMB listener, enabling NTLM relay attacks (to ADCS, another DC, or any service not requiring signing). Recommended: disable DFS Namespace on DCs that are not serving DFS namespaces; enable SMB signing and EPA on all relay targets." `
                 -Reference 'https://attack.mitre.org/techniques/T1187/'))
         }
 
@@ -700,7 +700,7 @@ function _HostOS_EvaluateFindings {
                 }
                 $findings.Add((New-Finding -Id 'HOST-020' -Severity 'High' `
                     -Technique 'T1649' `
-                    -Description "StrongCertificateBindingEnforcement on DC $host is $modeDesc. Must be 2 (full enforcement) — Microsoft enforced this by default from February 2025. Below 2, ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC9 (no security extension), and ESC10 (weak UPN certificate mapping) remain exploitable against this DC regardless of template-level mitigations. Registry path: HKLM\SYSTEM\CurrentControlSet\Services\Kdc\StrongCertificateBindingEnforcement. Set to 2 and validate Kerberos auth before removing the override." `
+                    -Description "StrongCertificateBindingEnforcement on DC $hostName is $modeDesc. Must be 2 (full enforcement) — Microsoft enforced this by default from February 2025. Below 2, ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC9 (no security extension), and ESC10 (weak UPN certificate mapping) remain exploitable against this DC regardless of template-level mitigations. Registry path: HKLM\SYSTEM\CurrentControlSet\Services\Kdc\StrongCertificateBindingEnforcement. Set to 2 and validate Kerberos auth before removing the override." `
                     -Reference 'https://attack.mitre.org/techniques/T1649/'))
             }
         }
@@ -717,7 +717,7 @@ function _HostOS_EvaluateFindings {
             }
             $findings.Add((New-Finding -Id 'HOST-021' -Severity 'High' `
                 -Technique 'T1557.001' `
-                -Description "LmCompatibilityLevel on $host is $lvlDesc. Value must be 5 (NTLMv2 only — refuse LM and NTLMv1 challenge/response) to prevent capture and relay of weak authentication material. Registry: HKLM\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel." `
+                -Description "LmCompatibilityLevel on $hostName is $lvlDesc. Value must be 5 (NTLMv2 only — refuse LM and NTLMv1 challenge/response) to prevent capture and relay of weak authentication material. Registry: HKLM\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
@@ -726,7 +726,7 @@ function _HostOS_EvaluateFindings {
             $sev = if ($isDC) { 'High' } else { 'Medium' }
             $findings.Add((New-Finding -Id 'HOST-022' -Severity $sev `
                 -Technique 'T1003.001' `
-                -Description "Credential Guard (Virtualization Based Security / LSASS isolation) is NOT enabled on $host. Without Credential Guard, LSASS memory can be read by a local admin to extract NTLM hashes and Kerberos tickets (pass-the-hash / pass-the-ticket). Requires: VBS enabled (EnableVirtualizationBasedSecurity=1) + LsaCfgFlags >= 1. Registry: HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard." `
+                -Description "Credential Guard (Virtualization Based Security / LSASS isolation) is NOT enabled on $hostName. Without Credential Guard, LSASS memory can be read by a local admin to extract NTLM hashes and Kerberos tickets (pass-the-hash / pass-the-ticket). Requires: VBS enabled (EnableVirtualizationBasedSecurity=1) + LsaCfgFlags >= 1. Registry: HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard." `
                 -Reference 'https://attack.mitre.org/techniques/T1003/001/'))
         }
 
@@ -734,7 +734,7 @@ function _HostOS_EvaluateFindings {
         if ($sf.psV2Present) {
             $findings.Add((New-Finding -Id 'HOST-023' -Severity 'Medium' `
                 -Technique 'T1059.001' `
-                -Description "PowerShell version 2 is present on $host. PS v2 does not support ScriptBlock logging, AMSI, or Constrained Language Mode — an attacker can invoke 'powershell.exe -Version 2' to bypass all modern PowerShell security controls. Remove via: Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root (client) or Remove-WindowsFeature PowerShell-V2 (server)." `
+                -Description "PowerShell version 2 is present on $hostName. PS v2 does not support ScriptBlock logging, AMSI, or Constrained Language Mode — an attacker can invoke 'powershell.exe -Version 2' to bypass all modern PowerShell security controls. Remove via: Disable-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root (client) or Remove-WindowsFeature PowerShell-V2 (server)." `
                 -Reference 'https://attack.mitre.org/techniques/T1059/001/'))
         }
 
@@ -747,7 +747,7 @@ function _HostOS_EvaluateFindings {
             }
             $findings.Add((New-Finding -Id 'HOST-024' -Severity 'High' `
                 -Technique 'T1557' `
-                -Description "LDAP channel binding on DC $host is $cbDesc. Without value=2 (always required), an attacker can relay LDAP authentication even when LDAP signing is enforced — the relay session omits the channel binding token and the DC accepts it. This allows NTLM relay to LDAP for ACL modifications (e.g., granting DCSync rights). Registry: HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters\LdapEnforceChannelBinding. Set to 2; test with ldp.exe before enforcing." `
+                -Description "LDAP channel binding on DC $hostName is $cbDesc. Without value=2 (always required), an attacker can relay LDAP authentication even when LDAP signing is enforced — the relay session omits the channel binding token and the DC accepts it. This allows NTLM relay to LDAP for ACL modifications (e.g., granting DCSync rights). Registry: HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters\LdapEnforceChannelBinding. Set to 2; test with ldp.exe before enforcing." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/'))
         }
 
@@ -755,7 +755,7 @@ function _HostOS_EvaluateFindings {
         if ($sf.winrmAllowUnencrypted) {
             $findings.Add((New-Finding -Id 'HOST-025' -Severity 'High' `
                 -Technique 'T1557' `
-                -Description "WinRM AllowUnencrypted is enabled on $host (policy: HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencrypted=1). WinRM over HTTP (port 5985) without encryption exposes PowerShell remoting traffic — credentials and session content — to network eavesdropping. Require HTTPS (port 5986) or at minimum disable unencrypted transport and enforce Kerberos auth." `
+                -Description "WinRM AllowUnencrypted is enabled on $hostName (policy: HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencrypted=1). WinRM over HTTP (port 5985) without encryption exposes PowerShell remoting traffic — credentials and session content — to network eavesdropping. Require HTTPS (port 5986) or at minimum disable unencrypted transport and enforce Kerberos auth." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/'))
         }
 
@@ -763,7 +763,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and $sf.remoteRegistryRunning) {
             $findings.Add((New-Finding -Id 'HOST-026' -Severity 'Medium' `
                 -Technique 'T1012' `
-                -Description "Remote Registry service is running on DC $host. Remote Registry allows authenticated users (with appropriate permissions) to read and modify the registry over the network — a common lateral-movement enumeration vector. DCs do not require this service for standard AD operations. Recommended: disable or set to Manual/Disabled on all DCs." `
+                -Description "Remote Registry service is running on DC $hostName. Remote Registry allows authenticated users (with appropriate permissions) to read and modify the registry over the network — a common lateral-movement enumeration vector. DCs do not require this service for standard AD operations. Recommended: disable or set to Manual/Disabled on all DCs." `
                 -Reference 'https://attack.mitre.org/techniques/T1012/'))
         }
 
@@ -771,7 +771,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and -not $sf.bitlockerOsVolumeProtected) {
             $findings.Add((New-Finding -Id 'HOST-027' -Severity 'Medium' `
                 -Technique 'T1005' `
-                -Description "BitLocker is NOT enabled on the OS volume of DC $host. An attacker with physical access (or a malicious hypervisor snapshot) can mount the NTDS.dit and SYSTEM hive offline to extract all domain credentials without any authentication. All DC volumes should be BitLocker-protected with a TPM PIN or startup key stored in a PAM system." `
+                -Description "BitLocker is NOT enabled on the OS volume of DC $hostName. An attacker with physical access (or a malicious hypervisor snapshot) can mount the NTDS.dit and SYSTEM hive offline to extract all domain credentials without any authentication. All DC volumes should be BitLocker-protected with a TPM PIN or startup key stored in a PAM system." `
                 -Reference 'https://attack.mitre.org/techniques/T1005/'))
         }
 
@@ -779,7 +779,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and -not $sf.ipv6FullyDisabled) {
             $findings.Add((New-Finding -Id 'HOST-028' -Severity 'High' `
                 -Technique 'T1557' `
-                -Description "IPv6 is active on DC $host without full disable (DisabledComponents=0x$([Convert]::ToString($sf.ipv6DisabledComponents,16).ToUpper())). Unmanaged IPv6 enables the mitm6 attack: a rogue DHCPv6 server can advertise itself as the default IPv6 gateway and DNS resolver, intercept WPAD lookup traffic, and capture NTLM authentication for relay. Remediate: deploy DHCPv6/RA Guard on network switches, OR disable IPv6 on DCs via GPO registry key (HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\DisabledComponents=0xFF) if IPv6 is not operationally required." `
+                -Description "IPv6 is active on DC $hostName without full disable (DisabledComponents=0x$([Convert]::ToString($sf.ipv6DisabledComponents,16).ToUpper())). Unmanaged IPv6 enables the mitm6 attack: a rogue DHCPv6 server can advertise itself as the default IPv6 gateway and DNS resolver, intercept WPAD lookup traffic, and capture NTLM authentication for relay. Remediate: deploy DHCPv6/RA Guard on network switches, OR disable IPv6 on DCs via GPO registry key (HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\DisabledComponents=0xFF) if IPv6 is not operationally required." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/'))
         }
 
@@ -787,7 +787,7 @@ function _HostOS_EvaluateFindings {
         if (-not $sf.smbClientSigningRequired) {
             $findings.Add((New-Finding -Id 'HOST-029' -Severity 'Medium' `
                 -Technique 'T1557.001' `
-                -Description "SMB client signing is NOT required on $host (LanmanWorkstation\RequireSecuritySignature is not 1). Even if the SERVER enforces signing (HOST-012), a client that does not require signing can be coerced into an unsigned SMB session toward resources it connects to, enabling SMB relay against those targets. Set RequireSecuritySignature=1 in LanmanWorkstation\Parameters via GPO. This is the client-side control; HOST-012 checks the separate server-side (LanmanServer) setting." `
+                -Description "SMB client signing is NOT required on $hostName (LanmanWorkstation\RequireSecuritySignature is not 1). Even if the SERVER enforces signing (HOST-012), a client that does not require signing can be coerced into an unsigned SMB session toward resources it connects to, enabling SMB relay against those targets. Set RequireSecuritySignature=1 in LanmanWorkstation\Parameters via GPO. This is the client-side control; HOST-012 checks the separate server-side (LanmanServer) setting." `
                 -Reference 'https://attack.mitre.org/techniques/T1557/001/'))
         }
 
@@ -795,7 +795,7 @@ function _HostOS_EvaluateFindings {
         if ($isDC -and $sf.cachedLogonsCount -gt 0) {
             $findings.Add((New-Finding -Id 'HOST-030' -Severity 'High' `
                 -Technique 'T1003.005' `
-                -Description "Cached domain credential logon is ENABLED on DC $host (CachedLogonsCount=$($sf.cachedLogonsCount)). Cached credentials (MSCacheV2 hashes) are stored in the SECURITY registry hive and can be extracted by an attacker with SYSTEM access and cracked offline. DCs are always connected and never require cached credentials. Set to 0 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Interactive Logon: Number of previous logons to cache." `
+                -Description "Cached domain credential logon is ENABLED on DC $hostName (CachedLogonsCount=$($sf.cachedLogonsCount)). Cached credentials (MSCacheV2 hashes) are stored in the SECURITY registry hive and can be extracted by an attacker with SYSTEM access and cracked offline. DCs are always connected and never require cached credentials. Set to 0 via GPO: Computer Configuration > Windows Settings > Security Settings > Local Policies > Security Options > Interactive Logon: Number of previous logons to cache." `
                 -Reference 'https://attack.mitre.org/techniques/T1003/005/'))
         }
 
@@ -816,8 +816,8 @@ function _HostOS_EvaluateFindings {
             $days = if ($bk -is [hashtable]) { $bk.daysSinceBackup } else { -1 }
             if ($days -lt 0 -or $days -gt 30) {
                 $reason = if ($days -lt 0) {
-                    "No backup detected on DC $host via Windows Server Backup or VSS shadow copies (method checked: $($bk.method))."
-                } else { "Last detected backup on DC $host is $days days old." }
+                    "No backup detected on DC $hostName via Windows Server Backup or VSS shadow copies (method checked: $($bk.method))."
+                } else { "Last detected backup on DC $hostName is $days days old." }
                 $findings.Add((New-Finding -Id 'HOST-032' -Severity 'High' `
                     -Technique 'T1490' `
                     -Description "$reason Without a recent, tested backup, ransomware or malicious deletion of NTDS.dit may make domain recovery impossible. All DCs require a verified system-state backup (NTDS.dit + SYSTEM hive) at least every 30 days, stored offline or in immutable storage. Use Windows Server Backup system-state backup or a PAM-integrated AD backup solution." `

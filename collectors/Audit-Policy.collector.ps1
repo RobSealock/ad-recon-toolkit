@@ -1,7 +1,7 @@
 ﻿# Audit Policy and Detection Coverage collector.
 # MinPrivilege: LocalAdmin (WinRM to each Domain Controller)
 #
-# Collects audit policy via `auditpol /get /subcategory:* /r` (CSV, GUID-keyed,
+# Collects audit policy via `auditpol /get /category:* /r` (CSV, GUID-keyed,
 # locale-independent — see NOTES below). Also checks PowerShell logging, Sysmon,
 # WEF, log sizes, NTDS diagnostic level, and EDR presence.
 #
@@ -15,7 +15,7 @@
 #   All GUIDs use the format {0CCE9XXX-69AE-11D9-BED3-505054503030}.
 #   Verified against Windows Server 2016/2019/2022 auditpol CSV output.
 #   To verify in your environment (run on a DC):
-#     auditpol /get /subcategory:* /r | ConvertFrom-Csv |
+#     auditpol /get /category:* /r | ConvertFrom-Csv |
 #       Select-Object Subcategory,'Subcategory GUID' | Sort-Object Subcategory
 #   If a GUID constant below does not match, update the $script:_AUD_Guids table.
 #   Mismatch is safe — the collector captures all GUIDs; an incorrect constant
@@ -39,7 +39,7 @@
 
 # =============================================================================
 # AUDIT SUBCATEGORY GUID CONSTANTS
-# Source: Windows Server 2016/2019/2022 auditpol /get /subcategory:* /r output
+# Source: Windows Server 2016/2019/2022 auditpol /get /category:* /r output
 # =============================================================================
 $script:_AUD_Guids = @{
     # DS Access
@@ -109,14 +109,26 @@ $script:_AUD_RemoteScript = {
 
     # ── Audit policy (GUID-keyed, locale-independent) ──────────────────────────
     try {
-        $raw = (auditpol /get /subcategory:* /r 2>$null) -join "`n"
+        # 2>&1, not 2>$null -- auditpol writes failures (e.g. ERROR_PRIVILEGE_NOT_HELD
+        # when SeSecurityPrivilege isn't held) as plain text on either stream
+        # depending on the failure. Discarding stderr meant a privilege failure
+        # produced an empty $raw, which ConvertFrom-Csv parses as zero rows with
+        # no error -- auditPolicy silently stayed empty and looked identical to
+        # "no auditing configured" instead of "collection failed".
+        $raw = (auditpol /get /category:* /r 2>&1 | Out-String).Trim()
         $rows = $raw | ConvertFrom-Csv -ErrorAction Stop
+        $matchedAny = $false
         foreach ($row in $rows) {
             $guid    = ($row.'Subcategory GUID').Trim().ToUpper()
             $setting = ($row.'Inclusion Setting').Trim()
             if ($guid -match '^\{[0-9A-F\-]+\}$') {
                 $result.auditPolicy[$guid] = $setting
+                $matchedAny = $true
             }
+        }
+        if (-not $matchedAny) {
+            $snippet = if ($raw.Length -gt 300) { $raw.Substring(0, 300) } else { $raw }
+            $result.collectionErrors += "auditpol: command produced no usable Subcategory GUID rows. Raw output: $snippet"
         }
     } catch {
         $result.collectionErrors += "auditpol: $_"
@@ -286,6 +298,12 @@ function _AUD_SettingCovers {
     param([string]$Setting, [string]$Require)
     # Returns $true if the collected setting satisfies the required coverage.
     # $Require: 'Success', 'Failure', 'SuccessAndFailure', 'Any'
+    # 'Unknown' (auditpol collection itself failed -- see _AUD_GetSetting) counts
+    # as covered/non-failing here, matching this file's documented philosophy
+    # (see header NOTES): an inability to verify must produce a false-negative
+    # (missed gap), never a false-positive ("not audited" asserted as fact when
+    # we actually have no data).
+    if ($Setting -eq 'Unknown') { return $true }
     if (-not $Setting -or $Setting -eq 'No Auditing') { return $false }
     switch ($Require) {
         'Success'          { return $Setting -match 'Success' }
@@ -298,6 +316,11 @@ function _AUD_SettingCovers {
 
 function _AUD_GetSetting {
     param([hashtable]$Policy, [string]$GuidKey)
+    # Zero subcategories collected at all means auditpol itself failed (see
+    # collectionErrors) -- distinct from a specific subcategory genuinely being
+    # unconfigured. Treating the former as 'No Auditing' would assert a verified
+    # finding from a collection failure.
+    if ($Policy.Count -eq 0) { return 'Unknown' }
     $guid = $script:_AUD_Guids[$GuidKey]
     if (-not $guid) { return 'Unknown' }
     $val = $Policy[$guid.ToUpper()]
@@ -321,15 +344,20 @@ function _AUD_EvaluateFindings {
     if ($DcResults.Count -eq 0) { return ,$findings }
 
     # Helper: which DCs fail a given test
+    # Leading comma forces this array to survive as a single returned object --
+    # without it, PowerShell re-unwraps a one-element pipeline result back to a
+    # bare scalar at the call site (same gotcha _AUD_EvaluateFindings itself
+    # guards against below via `return ,$findings`), breaking every .Count check
+    # at each $badNNN call site whenever exactly one DC fails a given test.
     function Get-FailingDCs {
         param([scriptblock]$Test)
-        @($DcResults | Where-Object { & $Test $_ } | ForEach-Object { $_.computerName })
+        return ,@($DcResults | Where-Object { & $Test $_ } | ForEach-Object { $_.computerName })
     }
 
     # Helper: resolve which EDR products cover process telemetry
     function Get-EDRNote {
         param([hashtable]$DcData)
-        if (-not $DcData.edrProducts -or $DcData.edrProducts.Count -eq 0) { return $null }
+        if (-not $DcData.edrProducts -or @($DcData.edrProducts).Count -eq 0) { return $null }
         $names = $DcData.edrProducts | ForEach-Object {
             $edrName = $_
             $match = $script:_AUD_ProcessEDRServices | Where-Object { $_.Name -eq $edrName } | Select-Object -First 1
@@ -366,8 +394,12 @@ function _AUD_EvaluateFindings {
     $bad003 = Get-FailingDCs { param($dc) -not (_AUD_SettingCovers (_AUD_GetSetting $dc.auditPolicy 'ProcessCreation') 'Success') }
     if ($bad003.Count -gt 0) {
         $allHaveEDR = ($bad003 | ForEach-Object {
-            $dc = $DcResults | Where-Object { $_.computerName -eq $_ } | Select-Object -First 1
-            $dc.edrProducts.Count -gt 0
+            # Named variable, not $_ -- Where-Object rebinds $_ to its own pipeline
+            # item, shadowing the outer $_ (the failing computer name) and making
+            # this comparison always false ($DcResults item vs itself) otherwise.
+            $failingName = $_
+            $dc = $DcResults | Where-Object { $_.computerName -eq $failingName } | Select-Object -First 1
+            @($dc.edrProducts).Count -gt 0
         }) -notcontains $false
         $sev = if ($allHaveEDR) { 'Medium' } else { 'High' }
         $edrNote = if ($allHaveEDR) { ' Note: EDR products detected on these DCs may provide equivalent process telemetry — verify EDR coverage before enabling to manage event volume.' } else { '' }
@@ -382,8 +414,9 @@ function _AUD_EvaluateFindings {
     $bad004 = Get-FailingDCs { param($dc) $dc.psCmdLineEnabled -ne 'Enabled' }
     if ($bad004.Count -gt 0) {
         $allHaveEDR = ($bad004 | ForEach-Object {
-            $dc = $DcResults | Where-Object { $_.computerName -eq $_ } | Select-Object -First 1
-            $dc.edrProducts.Count -gt 0
+            $failingName = $_
+            $dc = $DcResults | Where-Object { $_.computerName -eq $failingName } | Select-Object -First 1
+            @($dc.edrProducts).Count -gt 0
         }) -notcontains $false
         $sev = if ($allHaveEDR) { 'Low' } else { 'Medium' }
         $findings.Add((New-Finding -Id 'AUD-004' -Severity $sev `
@@ -575,11 +608,36 @@ function _AUDPolicy_Collect {
         # Convert PSCustomObject (returned from Invoke-Command) to hashtable
         $ht = @{}
         foreach ($prop in $data.PSObject.Properties) { $ht[$prop.Name] = $prop.Value }
+        # Backfill any key that didn't survive the WinRM round-trip with the same
+        # default $script:_AUD_RemoteScript would have used, so downstream dot-access
+        # (under the caller's inherited Set-StrictMode -Version 2) never hits a
+        # "property cannot be found" error on a key that's merely absent rather
+        # than collected-but-empty.
+        $defaults = @{
+            computerName                     = $fqdn
+            auditPolicy                      = @{}
+            psScriptBlockLogging             = 'NotConfigured'
+            psCmdLineEnabled                 = 'NotConfigured'
+            psTranscription                  = 'NotConfigured'
+            sysmon                           = @{ installed = $false; configLoaded = $false; serviceName = '' }
+            wefSubscriptionCount             = 0
+            wefSubscriptionManagerConfigured = $false
+            logSizes                         = @{}
+            ntdsDiagLevel                    = -1
+            edrProducts                      = @()
+            amsiActive                       = $false
+            ntlmAuditEnabled                 = $false
+            ntlmAuditValue                   = 0
+            collectionErrors                 = @()
+        }
+        foreach ($key in $defaults.Keys) {
+            if (-not $ht.ContainsKey($key)) { $ht[$key] = $defaults[$key] }
+        }
         # auditPolicy may be a PSCustomObject from remoting — normalize to hashtable
-        if ($ht.auditPolicy -is [System.Management.Automation.PSObject]) {
+        if ($ht['auditPolicy'] -is [System.Management.Automation.PSObject]) {
             $ap = @{}
-            foreach ($p in $ht.auditPolicy.PSObject.Properties) { $ap[$p.Name] = $p.Value }
-            $ht.auditPolicy = $ap
+            foreach ($p in $ht['auditPolicy'].PSObject.Properties) { $ap[$p.Name] = $p.Value }
+            $ht['auditPolicy'] = $ap
         }
         [void]$dcResults.Add($ht)
 

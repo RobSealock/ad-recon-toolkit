@@ -87,7 +87,7 @@ function _SharpHound_Collect {
         $attrs = @{
             domain         = $RunContext.Domain
             zipFile        = if ($zipFile) { $zipFile.Name } else { 'not produced' }
-            collectionNote = 'Import the zip into BloodHound CE for attack-path analysis. API upload not yet implemented.'
+            collectionNote = 'Import the zip into BloodHound CE for attack-path analysis, or configure BloodHoundApiUrl/BloodHoundApiKey to upload automatically.'
         }
 
         # BloodHound CE API upload (optional — requires BloodHoundApiUrl and BloodHoundApiKey in settings)
@@ -97,7 +97,8 @@ function _SharpHound_Collect {
                 $jobId = _BHCE_Upload -ApiUrl $Settings['BloodHoundApiUrl'] `
                                       -ApiKey $Settings['BloodHoundApiKey'] `
                                       -ZipPath $zipFile.FullName
-                $attrs['uploadStatus'] = "uploaded — job $jobId"
+                $attrs['uploadStatus']   = "uploaded — job $jobId"
+                $attrs['collectionNote'] = 'Uploaded to BloodHound CE automatically — no manual import needed.'
                 Write-Host "         BloodHound CE upload complete (job $jobId)"
             } catch {
                 $attrs['uploadStatus'] = "upload failed: $_"

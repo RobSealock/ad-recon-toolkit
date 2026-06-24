@@ -81,6 +81,20 @@ function _ADC_IntProp {
     if ($Props[$Name].Count) { return [int]$Props[$Name][0] } else { return $Default }
 }
 
+# AD's "Interval"/LARGE_INTEGER-syntax attributes (maxPwdAge, lockoutDuration,
+# lockOutObservationWindow, etc.) come back from ADSI as an IADsLargeInteger
+# COM object, not a plain number -- casting that directly to [int] throws an
+# invalid-cast exception. Extract via HighPart/LowPart instead.
+function _ADC_LargeIntProp {
+    param($Props, [string]$Name, [int64]$Default = 0)
+    if (-not $Props[$Name].Count) { return $Default }
+    $val = $Props[$Name][0]
+    if ($val -is [int] -or $val -is [int64]) { return [int64]$val }
+    $lo = $val.LowPart
+    if ($lo -lt 0) { $lo += 4294967296 }
+    return ([int64]$val.HighPart * 4294967296) + $lo
+}
+
 function _ADC_StrProp {
     param($Props, [string]$Name, [string]$Default = '')
     if ($Props[$Name].Count) { return $Props[$Name][0].ToString() } else { return $Default }
@@ -445,9 +459,9 @@ function _ADC_CollectPasswordPolicy {
             minPasswordLength    = _ADC_IntProp $p 'minPwdLength'
             passwordHistoryLength= _ADC_IntProp $p 'pwdHistoryLength'
             complexityEnabled    = ((_ADC_IntProp $p 'pwdProperties') -band 1) -ne 0
-            maxPasswordAge       = _ADC_IntProp $p 'maxPwdAge'
+            maxPasswordAge       = _ADC_LargeIntProp $p 'maxPwdAge'
             lockoutThreshold     = _ADC_IntProp $p 'lockoutThreshold'
-            lockoutDuration      = _ADC_IntProp $p 'lockoutDuration'
+            lockoutDuration      = _ADC_LargeIntProp $p 'lockoutDuration'
         }
     } catch { return @{ minPasswordLength=0; error='collection-failed' } }
 }
@@ -636,11 +650,19 @@ function _ADC_CollectAdminSDHolderDACL {
             "^$([regex]::Escape($domSid))-518$"                   # Schema Admins
         )
 
-        # Control rights mask (GenericAll, WriteDACL, WriteOwner, GenericWrite, CreateChild)
-        $controlMask = [System.DirectoryServices.ActiveDirectoryRights]::GenericAll -bor
-                       [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl  -bor
-                       [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner -bor
-                       [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite
+        # Control rights mask, covering GenericAll/WriteDacl/WriteOwner/GenericWrite/
+        # CreateChild. Built from atomic bits rather than OR-ing in the GenericAll/
+        # GenericWrite composite VALUES directly -- those composites also carry the
+        # ReadControl bit, which ReadControl shares with GenericRead, so a -band test
+        # against the raw composites matched plain read-only GenericRead grants too.
+        # GenericAll/GenericWrite still match here since both inherently include
+        # WriteProperty (and GenericAll includes CreateChild) as constituent bits.
+        $controlMask = [System.DirectoryServices.ActiveDirectoryRights]::CreateChild   -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::DeleteChild   -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::DeleteTree    -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl     -bor
+                       [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner
 
         $aces    = [System.Collections.Generic.List[hashtable]]::new()
         $suspect = [System.Collections.Generic.List[hashtable]]::new()
@@ -1116,15 +1138,21 @@ function _ADC_CheckExchangeDACL {
     try {
         $s = New-Object System.DirectoryServices.DirectorySearcher((New-AdsiEntry "LDAP://$DomainDn"))
         $s.Filter = '(samaccountname=Exchange Windows Permissions)'
-        $s.PropertiesToLoad.Add('distinguishedname') | Out-Null; $s.SizeLimit = 1
+        $s.PropertiesToLoad.AddRange([string[]]@('distinguishedname', 'objectSid')) | Out-Null; $s.SizeLimit = 1
         $exGrp = $s.FindOne()
         if (-not $exGrp) { return $result }
         $result.exchangeGroupDn = $exGrp.Properties['distinguishedname'][0].ToString()
+        # Compare by SID directly rather than translating each ACE's IdentityReference
+        # to an NTAccount name -- that translation resolves against a domain controller
+        # using the current process token, which has no trust to a remote, non-domain-
+        # joined target and silently fails there, making this check a false negative
+        # (never detects the WriteDacl) in remote mode instead of a false positive.
+        $exGrpSid = (New-Object System.Security.Principal.SecurityIdentifier(
+            [byte[]]$exGrp.Properties['objectsid'][0], 0)).Value
         $domObj = (New-AdsiEntry "LDAP://$DomainDn")
         foreach ($ace in $domObj.psbase.ObjectSecurity.Access) {
             if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-            $trustee = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.IdentityReference.Value }
-            if ($trustee -imatch 'Exchange Windows Permissions') {
+            if ($ace.IdentityReference.Value -eq $exGrpSid) {
                 if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl) {
                     $result.exchangeWriteDacl = $true; break
                 }
@@ -1285,7 +1313,10 @@ function _ADCore_Collect {
     }
 
     # ADC-009: Default password policy
-    if ($pwdPolicy.minPasswordLength -lt 14) {
+    # Skip when collection itself failed -- the catch in _ADC_CollectPasswordPolicy
+    # defaults minPasswordLength to 0, which would otherwise read as a verified
+    # "no minimum length" finding instead of "we don't actually know".
+    if (-not $pwdPolicy['error'] -and $pwdPolicy.minPasswordLength -lt 14) {
         $findings.Add((New-Finding -Id 'ADC-009' -Severity 'Medium' `
             -Technique 'T1110.001' `
             -Description "Default domain password minimum length is $($pwdPolicy.minPasswordLength) characters (recommended: 14+). Short passwords increase offline cracking success after NTLM hash extraction." `

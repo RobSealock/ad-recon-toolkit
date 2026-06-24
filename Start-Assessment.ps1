@@ -96,6 +96,28 @@ if (-not $NonInteractive -and -not $ElevatedPass) {
     Write-Host "[Setup] Remote mode    : $(if ($hasTargetDC) { "TargetDC = $($settings['TargetDC'])" } else { 'off' })"
     Write-Host ''
 
+    if (-not $isDomainHost) {
+        # These external tools shell out to third-party EXEs/modules that resolve their
+        # own target via implicit Windows-auth domain membership rather than the
+        # TargetDC/credential plumbing in framework\Connection.ps1 -- they degrade or
+        # fail when there's no domain join to fall back on. Severity varies: some fail
+        # loudly (a WARNING and a collection-error record), others soft-fail SILENTLY
+        # with a clean-looking 0-findings result that is not actually a clean scan.
+        Write-Host '[Setup] Non-domain-joined — the following will NOT run correctly:'
+        Write-Host '  - Locksmith (ADCS ESC1-ESC16)      : HARD FAILS. Auto-detects the forest via the AD module; no -Domain override exists.'
+        Write-Host '  - SharpHound (BloodHound data)     : SILENT. Only --Domain is passed (no -d/--LdapUsername/--LdapPassword) — produces an empty zip with no warning.'
+        Write-Host '  - PingCastle (risk-rule scan)       : FAILS. Passes --server but no --user/--password — needs explicit creds when not domain-joined.'
+        Write-Host '  - Group3r (GPO/RSOP analysis)       : SILENT. Analyzes THIS host''s local RSOP, not the target domain''s GPOs — a clean 0-findings result is not reassuring.'
+        if ($settings['EnableCertipy']) {
+            Write-Host '  - Certipy (ADCS, EnableCertipy=on)  : requires CertipyUsername/CertipyPassword in settings.local.psd1 (already warns if missing).'
+        }
+        if ($settings['EnableHardeningKitty']) {
+            Write-Host '  - HardeningKitty (EnableHardeningKitty=on) : SILENT. Audits THIS host''s local policy, not the target DC — no warning if enabled.'
+        }
+        Write-Host '  Unaffected: AD-Core, DNS, Audit-Policy, Host-OS, GPO inventory/report (LDAP- and WinRM-based, fully remote-aware).'
+        Write-Host ''
+    }
+
     # Helper: wrap a string in PS single-quote syntax, escaping embedded quotes
     function _PSD1Str { param([string]$s) "'$($s -replace "'","''")'" }
 
@@ -267,6 +289,28 @@ Write-Host '  Run PurpleKnight against this domain and save the CSV/HTML'
 Write-Host "  export to:  $(Join-Path $RepoRoot 'output\purpleknight\')"
 Write-Host '  The PurpleKnight collector will pick it up on the next full run.'
 Write-Host ''
+
+# ── SharpHound / BloodHound CE reminder ───────────────────────────────────────
+# SharpHound.exe runs automatically, but the resulting zip is only USED
+# automatically if BloodHoundApiUrl/BloodHoundApiKey are configured and the
+# upload succeeds. Otherwise it just sits on disk until someone imports it.
+$shRecordFile = Join-Path $paths.RunRoot 'SharpHound.bloodhound-collection.json'
+if (Test-Path $shRecordFile) {
+    $shRecord = Get-Content $shRecordFile -Encoding UTF8 | Where-Object { $_.Trim() } |
+        ForEach-Object { ConvertFrom-Json $_ } | Select-Object -Last 1
+    $shAttrs  = $shRecord.attributes
+    # uploadStatus is only added to attributes when BloodHoundApiUrl is configured --
+    # check property existence before dot-access (Set-StrictMode is active here).
+    $shHasUploadStatus = $shAttrs.PSObject.Properties.Name -contains 'uploadStatus'
+    $shUploaded = $shHasUploadStatus -and $shAttrs.uploadStatus -like 'uploaded*'
+    if ($shAttrs.zipFile -and $shAttrs.zipFile -ne 'not produced' -and -not $shUploaded) {
+        Write-Host '  REMINDER — SharpHound / BloodHound CE (manual step required)'
+        Write-Host "  Zip collected but not auto-uploaded: $($shAttrs.zipFile)"
+        Write-Host "  Import it into BloodHound CE manually, or set BloodHoundApiUrl"
+        Write-Host '  and BloodHoundApiKey in settings.local.psd1 to automate this.'
+        Write-Host ''
+    }
+}
 
 # ── Post-run options ──────────────────────────────────────────────────────────
 # Suppressed when -NonInteractive is set, -ElevatedPass is set (UAC window),

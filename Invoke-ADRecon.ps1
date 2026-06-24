@@ -104,7 +104,7 @@ Update-RunIndex   -RepoRoot $RunContext.RepoRoot -RunId $RunContext.RunId -RunRo
 $diffScript = Join-Path $PSScriptRoot 'diff\Compare-ReconRuns.ps1'
 if (Test-Path $diffScript) {
     try {
-        & $diffScript -AutoSelectPrevious -NewRunId $RunContext.RunId -RepoRoot $RunContext.RepoRoot
+        & $diffScript -AutoSelectPrevious -NewRunId $RunContext.RunId -RepoRoot $RunContext.RepoRoot | Out-Null
     } catch {
         Write-Warning "[Orchestrator] Drift comparison skipped: $_"
     }

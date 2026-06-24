@@ -289,19 +289,54 @@ function _GPO_CheckGPOModificationRights {
     $policiesDn = "CN=Policies,CN=System,$DomainDn"
     $safePatterns = @('CREATOR OWNER','SYSTEM','Enterprise Admins','Domain Admins',
                       'Administrators','Group Policy Creator Owners','NT AUTHORITY')
-    $dangerous = [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl -bor
-                 [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner -bor
-                 [System.DirectoryServices.ActiveDirectoryRights]::GenericAll  -bor
-                 [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite
+
+    # SID-based fallback for the same well-known Tier-0 principals. Translate([NTAccount])
+    # resolves a SID to a name by looking it up against a domain controller using the
+    # CURRENT PROCESS token -- in remote mode (non-domain-joined host, alternate creds
+    # used only for the explicit LDAP/CIM connections elsewhere) that token has no trust
+    # to the target domain, so the translation silently fails and falls back to the raw
+    # SID string, which never matches the name-based $safePatterns above. This caused
+    # Domain Admins/Enterprise Admins/Domain Controllers ACEs on DC-OU GPOs to be
+    # flagged as "non-Tier-0" attackers on every remote-mode run.
+    $domSid = try {
+        (New-Object System.Security.Principal.SecurityIdentifier(
+            ((New-AdsiEntry "LDAP://$DomainDn")).objectSid.Value, 0)).ToString()
+    } catch { '' }
+    $tier0SidPatterns = @(
+        '^S-1-5-32-544$'                                      # BUILTIN\Administrators
+        '^S-1-5-18$'                                          # SYSTEM
+        '^S-1-3-0$'                                           # Creator Owner
+        '^S-1-5-9$'                                           # Enterprise DCs
+        "^$([regex]::Escape($domSid))-512$"                   # Domain Admins
+        "^$([regex]::Escape($domSid))-519$"                   # Enterprise Admins
+        "^$([regex]::Escape($domSid))-516$"                   # Domain Controllers
+        "^$([regex]::Escape($domSid))-520$"                   # Group Policy Creator Owners
+    )
+    # Built from atomic bits, not the GenericAll/GenericWrite composite VALUES --
+    # those composites also carry the ReadControl bit, which ReadControl shares
+    # with GenericRead, so OR-ing the composites into a -band mask matched plain
+    # read-only GenericRead grants too. GenericAll/GenericWrite still match here
+    # since both inherently include WriteProperty (and GenericAll CreateChild) as
+    # constituent bits.
+    $dangerous = [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl     -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner    -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::CreateChild   -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::DeleteChild   -bor
+                 [System.DirectoryServices.ActiveDirectoryRights]::DeleteTree
     foreach ($guid in $GpoGuids) {
         try {
             $gpoObj = (New-AdsiEntry "LDAP://CN=$guid,$policiesDn")
             foreach ($ace in $gpoObj.psbase.ObjectSecurity.Access) {
                 if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
                 if (-not ($ace.ActiveDirectoryRights -band $dangerous)) { continue }
-                $trustee = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $ace.IdentityReference.Value }
-                $isSafe  = $false
+                $sidValue = $ace.IdentityReference.Value
+                $trustee  = try { $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $sidValue }
+                $isSafe   = $false
                 foreach ($p in $safePatterns) { if ($trustee -imatch [regex]::Escape($p)) { $isSafe = $true; break } }
+                if (-not $isSafe) {
+                    foreach ($p in $tier0SidPatterns) { if ($sidValue -match $p) { $isSafe = $true; break } }
+                }
                 if (-not $isSafe) { $issues.Add(@{ gpoGuid=$guid; trustee=$trustee; rights=$ace.ActiveDirectoryRights.ToString() }) }
             }
         } catch { Write-Verbose "[GPO] DACL check failed for ${guid}: $_" }

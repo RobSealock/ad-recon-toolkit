@@ -61,7 +61,13 @@ if ($AutoSelectPrevious) {
     # reliably flatten a multi-element array (see framework\Repository.ps1).
     $indexParsed = ConvertFrom-Json (Get-Content $indexPath -Raw -Encoding UTF8)
     $index = @($indexParsed)
-    $prior = @($index | Where-Object { $_.runId -ne $NewRunId } | Sort-Object runId -Descending | Select-Object -First 1)
+    # Sort by the run's actual timestamp, not runId -- runId is a random GUID,
+    # so sorting by it picks whichever run has the lexicographically largest
+    # GUID, not the most recent one. Cast to [datetime] rather than relying on
+    # string sort of the ISO-8601 value to stay correct regardless of timezone
+    # offset formatting.
+    $prior = @($index | Where-Object { $_.runId -ne $NewRunId } |
+        Sort-Object { [datetime]$_.time } -Descending | Select-Object -First 1)
     if (-not $prior) {
         Write-Host "[Diff] Only one run in index — no baseline for comparison. Skipping."
         return $null
@@ -84,14 +90,22 @@ function Resolve-RunPath {
 function Load-RunRecords {
     param([string]$RunPath, [bool]$IncludeState)
     $records = @{}
-    Get-ChildItem -Path $RunPath -Filter '*.json' -Exclude 'run-manifest.json' |
+    # -Filter combined with -Exclude on Get-ChildItem returns zero results under
+    # PowerShell 5.1 (provider-level -Filter and client-side -Exclude don't compose) --
+    # filter with -Filter alone and exclude via Where-Object instead.
+    Get-ChildItem -Path $RunPath -Filter '*.json' | Where-Object { $_.Name -ne 'run-manifest.json' } |
         ForEach-Object {
             # NDJSON format: one JSON object per line (see framework\Repository.ps1).
             $items = @(Get-Content $_.FullName -Encoding UTF8 |
                 Where-Object { $_.Trim() } | ForEach-Object { ConvertFrom-Json $_ })
             foreach ($r in $items) {
-                if (-not $IncludeState -and $r.category -eq 'state') { continue }
-                if ($r.recordType -in @('collection-error','review-required')) { continue }
+                # collection-error/review-required records have no 'category' field, and
+                # normal records have no 'recordType' field -- check property existence
+                # before dot-access so Set-StrictMode (inherited from Start-Assessment.ps1)
+                # doesn't throw "property cannot be found" on the absent one.
+                $propNames = $r.PSObject.Properties.Name
+                if ($propNames -contains 'recordType' -and $r.recordType -in @('collection-error','review-required')) { continue }
+                if (-not $IncludeState -and $propNames -contains 'category' -and $r.category -eq 'state') { continue }
                 $key = "$($r.collector)|$($r.objectType)|$($r.stableId)"
                 $records[$key] = $r
             }
@@ -106,8 +120,50 @@ function Get-AttributeDiff {
     foreach ($k in $allKeys) {
         $va = $ObjA.$k
         $vb = $ObjB.$k
-        $sa = if ($va -is [array]) { ($va | ConvertTo-Json -Compress) } else { "$va" }
-        $sb = if ($vb -is [array]) { ($vb | ConvertTo-Json -Compress) } else { "$vb" }
+        if ($va -is [array] -and $vb -is [array]) {
+            # Arrays of objects (services, shares, scheduled tasks...) used to be
+            # stringified whole-array-to-whole-array, so changing ONE element (e.g.
+            # one service's state) dumped the entire array as Before/After -- often
+            # hundreds of identical entries either side of the one real change.
+            # Diff element-by-element via a recognizable key field instead, when
+            # one exists, and report only what actually changed/added/removed.
+            $keyField = $null
+            if ($va.Count -gt 0) {
+                foreach ($cand in @('name', 'id', 'stableId', 'samAccount')) {
+                    if (@($va[0].PSObject.Properties.Name) -contains $cand) { $keyField = $cand; break }
+                }
+            }
+            if ($keyField) {
+                $mapA = @{}; foreach ($item in $va) { $mapA[[string]$item.$keyField] = $item }
+                $mapB = @{}; foreach ($item in $vb) { $mapB[[string]$item.$keyField] = $item }
+                $added       = @($mapB.Keys | Where-Object { -not $mapA.ContainsKey($_) })
+                $removed     = @($mapA.Keys | Where-Object { -not $mapB.ContainsKey($_) })
+                $changedKeys = @($mapA.Keys | Where-Object {
+                    $mapB.ContainsKey($_) -and
+                    (($mapA[$_] | ConvertTo-Json -Compress) -ne ($mapB[$_] | ConvertTo-Json -Compress))
+                })
+                if ($added.Count -eq 0 -and $removed.Count -eq 0 -and $changedKeys.Count -eq 0) {
+                    $sa = $sb = $null
+                } else {
+                    $beforeParts = [System.Collections.Generic.List[string]]::new()
+                    $afterParts  = [System.Collections.Generic.List[string]]::new()
+                    foreach ($ck in $changedKeys) {
+                        $beforeParts.Add("$ck=$($mapA[$ck] | ConvertTo-Json -Compress)")
+                        $afterParts.Add("$ck=$($mapB[$ck] | ConvertTo-Json -Compress)")
+                    }
+                    foreach ($rk in $removed) { $beforeParts.Add("$rk=$($mapA[$rk] | ConvertTo-Json -Compress)") }
+                    foreach ($ak in $added)   { $afterParts.Add("$ak=$($mapB[$ak] | ConvertTo-Json -Compress)") }
+                    $sa = $beforeParts -join '; '
+                    $sb = $afterParts -join '; '
+                }
+            } else {
+                $sa = ($va | ConvertTo-Json -Compress)
+                $sb = ($vb | ConvertTo-Json -Compress)
+            }
+        } else {
+            $sa = if ($va -is [array]) { ($va | ConvertTo-Json -Compress) } else { "$va" }
+            $sb = if ($vb -is [array]) { ($vb | ConvertTo-Json -Compress) } else { "$vb" }
+        }
         if ($sa -ne $sb) { $changes[$k] = @{ Before = $sa; After = $sb } }
     }
     return $changes
@@ -129,28 +185,37 @@ Write-Host "[Diff] Compare  : $runIdB  ($resolvedB)"
 $recA = Load-RunRecords -RunPath $resolvedA -IncludeState $IncludeState.IsPresent
 $recB = Load-RunRecords -RunPath $resolvedB -IncludeState $IncludeState.IsPresent
 
-$keysA = [System.Collections.Generic.HashSet[string]]$recA.Keys
-$keysB = [System.Collections.Generic.HashSet[string]]$recB.Keys
+# Casting Hashtable.Keys directly to HashSet[string] does not enumerate the
+# keys -- PowerShell has no element-wise converter for the untyped KeyCollection,
+# so it stringifies the whole collection (joining all keys with $OFS) and wraps
+# that single string as the only HashSet element. Going through [string[]] first
+# forces proper element-wise enumeration.
+$keysA = [System.Collections.Generic.HashSet[string]]([string[]]$recA.Keys)
+$keysB = [System.Collections.Generic.HashSet[string]]([string[]]$recB.Keys)
 
-$added   = $keysB | Where-Object { $_ -notin $keysA }
-$removed = $keysA | Where-Object { $_ -notin $keysB }
-$common  = $keysA | Where-Object { $_ -in $keysB }
+# Wrapped in @() throughout -- Where-Object/foreach collecting expressions yield
+# $null (zero matches) or a bare scalar (one match) rather than an array, and
+# Set-StrictMode disables the usual "any object responds to .Count" convenience,
+# so an unwrapped single-match result breaks every .Count check below.
+$added   = @($keysB | Where-Object { $_ -notin $keysA })
+$removed = @($keysA | Where-Object { $_ -notin $keysB })
+$common  = @($keysA | Where-Object { $_ -in $keysB })
 
 # ── Compute diffs ─────────────────────────────────────────────────────────────
-$changed = foreach ($key in $common) {
+$changed = @(foreach ($key in $common) {
     $attrA = $recA[$key].attributes
     $attrB = $recB[$key].attributes
     $diff  = Get-AttributeDiff -ObjA $attrA -ObjB $attrB
     if ($diff.Count -gt 0) {
         @{ Key = $key; Diff = $diff }
     }
-}
+})
 
 # ── Finding-level diff ────────────────────────────────────────────────────────
 # Compares finding IDs on records common to both runs — surfaces findings that
 # appeared (new) or resolved (gone) between runs. Attribute drift alone does not
 # capture this because findings live in record.findings[], not record.attributes.
-$findingChanges = foreach ($key in $common) {
+$findingChanges = @(foreach ($key in $common) {
     $idsA = @($recA[$key].findings | Where-Object { $_ } | ForEach-Object { $_.id })
     $idsB = @($recB[$key].findings | Where-Object { $_ } | ForEach-Object { $_.id })
     $newF      = @($idsB | Where-Object { $_ -notin $idsA })
@@ -158,7 +223,7 @@ $findingChanges = foreach ($key in $common) {
     if ($newF.Count -gt 0 -or $resolvedF.Count -gt 0) {
         @{ Key = $key; New = $newF; Resolved = $resolvedF; Record = $recA[$key] }
     }
-}
+})
 
 # ── Report ────────────────────────────────────────────────────────────────────
 $lines = [System.Collections.Generic.List[string]]::new()

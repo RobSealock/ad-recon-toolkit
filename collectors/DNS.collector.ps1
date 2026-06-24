@@ -128,11 +128,15 @@ function _DNS_CollectZoneWriteRights {
             "^$([regex]::Escape($domSid))-516$"                   # Domain Controllers
         )
 
-        # Rights masks covering "can write DNS records"
-        $writeRightsMask = [System.DirectoryServices.ActiveDirectoryRights]::CreateChild  -bor
-                           [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty -bor
-                           [System.DirectoryServices.ActiveDirectoryRights]::GenericWrite  -bor
-                           [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+        # Rights mask covering "can write DNS records". Deliberately just
+        # CreateChild|WriteProperty -- GenericWrite/GenericAll are composite
+        # flag values that also carry the ReadControl bit, which ReadControl
+        # shares with GenericRead. OR-ing those composites into a -band mask
+        # made any ACE with a plain GenericRead grant (read-only) match as a
+        # "writer". GenericAll/GenericWrite grants still match here since both
+        # composites inherently include the CreateChild/WriteProperty bits.
+        $writeRightsMask = [System.DirectoryServices.ActiveDirectoryRights]::CreateChild -bor
+                           [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty
 
         # Scriptblock (not nested function) so it closes over $writers/$tier0Patterns/$writeRightsMask
         # without leaking into the enclosing script scope.
@@ -218,7 +222,11 @@ function _DNS_Collect {
 
     $rootDse  = (New-AdsiEntry 'LDAP://RootDSE')
     $domainDn = $rootDse.defaultNamingContext.ToString()
-    $dnsServer= $RunContext.Domain   # use domain name; DnsServer module resolves to a DC
+    # In remote mode there's no implicit domain membership to resolve the bare
+    # domain name to a DC, and it isn't covered by WinRM TrustedHosts either —
+    # target the configured DC directly. Falls back to the domain name for the
+    # normal domain-joined case, where DnsServer module resolution to a DC works.
+    $dnsServer= if ($Settings['TargetDC']) { $Settings['TargetDC'] } else { $RunContext.Domain }
 
     try {
         # ── Computer accounts for orphan detection ────────────────────────────
