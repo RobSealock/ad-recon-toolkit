@@ -131,6 +131,12 @@ if (Test-Path $registerScript) {
     & $registerScript -RunRoot $paths.RunRoot -RepoRoot $RepoRoot
 }
 
+Write-Host '[Reports] Generating validation cards...'
+$validationScript = Join-Path $RepoRoot 'report\New-ValidationCards.ps1'
+if (Test-Path $validationScript) {
+    & $validationScript -RunRoot $paths.RunRoot -RepoRoot $RepoRoot
+}
+
 # ── Git commit ────────────────────────────────────────────────────────────────
 if (-not $NoGitCommit -and $settings['GitCommitRuns']) {
     Invoke-GitCommitRun -RepoRoot $RepoRoot -RunId $ctx.RunId

@@ -64,22 +64,21 @@ function Load-RunRecords {
         Where-Object { $_.Name -ne 'run-manifest.json' } |
         ForEach-Object {
             try {
-                # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json)
-                # does not reliably flatten a multi-element array (see
-                # framework\Repository.ps1 for the full explanation).
-                $itemsParsed = ConvertFrom-Json (Get-Content $_.FullName -Raw -Encoding UTF8)
-                @($itemsParsed) | ForEach-Object { $records.Add($_) }
+                # NDJSON format: one JSON object per line (see framework\Repository.ps1).
+                $items = @(Get-Content $_.FullName -Encoding UTF8 |
+                    Where-Object { $_.Trim() } | ForEach-Object { ConvertFrom-Json $_ })
+                $items | ForEach-Object { $records.Add($_) }
             } catch {}
         }
     return $records
 }
 
 $severityBadge = @{
-    Critical     = '🔴 **CRITICAL**'
-    High         = '🟠 **HIGH**'
-    Medium       = '🟡 MEDIUM'
-    Low          = '🟢 Low'
-    Informational= 'ℹ️ Info'
+    Critical     = '**CRITICAL**'
+    High         = '**HIGH**'
+    Medium       = 'MEDIUM'
+    Low          = 'Low'
+    Informational= 'Info'
 }
 $severityOrder = @{ Critical=0; High=1; Medium=2; Low=3; Informational=4 }
 
@@ -142,10 +141,10 @@ ai "## Finding Summary"
 ai ""
 ai "| Severity | Count |"
 ai "|----------|-------|"
-ai "| 🔴 Critical | $critCount |"
-ai "| 🟠 High | $highCount |"
-ai "| 🟡 Medium | $medCount |"
-ai "| 🟢 Low | $lowCount |"
+ai "| Critical | $critCount |"
+ai "| High | $highCount |"
+ai "| Medium | $medCount |"
+ai "| Low | $lowCount |"
 ai "| **Total** | **$($allFindings.Count)** |"
 ai ""
 ai "## Pages"
@@ -259,7 +258,7 @@ if ($domainRec -and $domainRec.attributes) {
     aa "| Domain Functional Level | $($di.functionalLevel) |"
     aa "| Forest Functional Level | $($fl.functionalLevel) |"
     aa "| Machine Account Quota | $($di.machineAccountQuota) |"
-    aa "| AD Recycle Bin | $(if($di.recycleBinEnabled){'✅ Enabled'}else{'❌ NOT enabled'}) |"
+    aa "| AD Recycle Bin | $(if($di.recycleBinEnabled){'Enabled'}else{'NOT enabled'}) |"
     aa "| Tombstone Lifetime | $($di.tombstoneLifetimeDays) days |"
     aa ""
     aa "## Kerberos"
@@ -295,7 +294,7 @@ if ($domainRec -and $domainRec.attributes) {
 }
 
 if ($domainRec.attributes.dcSyncHolders -and $domainRec.attributes.dcSyncHolders.Count -gt 0) {
-    aa "## ⚠️ Non-Standard DCSync Rights"
+    aa "## Non-Standard DCSync Rights"
     aa ""
     foreach ($holder in $domainRec.attributes.dcSyncHolders) {
         aa "- ``$holder``"
@@ -312,7 +311,7 @@ if ($privGroups -and $privGroups.attributes.groups) {
             aa "_Empty_"
         } else {
             foreach ($m in $grp.members) {
-                $status = if ($m.enabled) { '✅' } else { '❌ disabled' }
+                $status = if ($m.enabled) { 'Enabled' } else { 'Disabled' }
                 aa "- $($m.samAccount) [$($m.objectClass)] $status"
             }
         }
@@ -327,7 +326,7 @@ if ($domainRec.attributes.trusts -and $domainRec.attributes.trusts.Count -gt 0) 
     aa "|---------|-----------|------------|---------------|"
     foreach ($t in $domainRec.attributes.trusts) {
         $dir = @{1='Inbound';2='Outbound';3='Bidirectional'}[[int]$t.direction]
-        $sid = if ($t.sidFiltering) { '✅ Enabled' } else { '❌ Disabled' }
+        $sid = if ($t.sidFiltering) { 'Enabled' } else { 'Disabled' }
         aa "| $($t.partner) | $dir | $(if($t.isTransitive){'Yes'}else{'No'}) | $sid |"
     }
     aa ""
@@ -368,7 +367,7 @@ if ($hostRecords.Count -eq 0) {
         $a   = $r.attributes
         $os  = if ($a.os) { $a.os.caption + ' (' + $a.os.buildNumber + ')' } else { '?' }
         $fc  = if ($r.findings) { $r.findings.Count } else { 0 }
-        $rb  = if ($a.os -and $a.os.pendingReboot) { '⚠️ YES' } else { '—' }
+        $rb  = if ($a.os -and $a.os.pendingReboot) { 'YES' } else { '—' }
         $roles = if ($a.roles) { $a.roles -join ', ' } else { '—' }
         ah "| $($a.fqdn) | $os | $($r.tier) | $roles | $rb | $fc |"
     }
@@ -383,18 +382,18 @@ if ($hostRecords.Count -eq 0) {
         if ($fl -and $fl.Count -gt 0) {
             ah "| Security Control | State |"
             ah "|------------------|-------|"
-            ah "| LSA RunAsPPL | $(if($fl.lsaRunAsPPL){'✅'}else{'❌'}) |"
-            ah "| Credential Guard | $(if($fl.credentialGuardEnabled){'✅'}else{'❌'}) |"
-            ah "| WDigest Caching | $(if($fl.wdigestCaching){'❌ ENABLED'}else{'✅ Disabled'}) |"
-            ah "| SMBv1 | $(if($fl.smb1Enabled){'❌ ENABLED'}else{'✅ Disabled'}) |"
-            ah "| SMB Signing Required | $(if($fl.smbSigningRequired){'✅'}else{'❌'}) |"
-            ah "| LDAP Signing Required | $(if($fl.ldapSigningRequired){'✅'}else{'❌'}) |"
-            ah "| LAPS | $(if($fl.lapsVersion -eq 'none'){'❌ Not deployed'}else{$fl.lapsVersion}) |"
-            ah "| Print Spooler | $(if($fl.printSpoolerRunning){'❌ Running'}else{'✅ Stopped'}) |"
-            ah "| WebClient | $(if($fl.webClientRunning){'❌ Running'}else{'✅ Stopped'}) |"
-            ah "| RDP | $(if($fl.rdpEnabled){'Enabled'}else{'Disabled'}) $(if($fl.rdpEnabled -and -not $fl.rdpNLARequired){'❌ NO NLA'}elseif($fl.rdpEnabled){'✅ NLA'}else{''}) |"
-            ah "| LLMNR | $(if($fl.llmnrEnabled){'❌ Enabled'}else{'✅ Disabled'}) |"
-            ah "| NBT-NS | $(if($fl.nbtNSEnabled){'❌ Enabled'}else{'✅ Disabled'}) |"
+            ah "| LSA RunAsPPL | $(if($fl.lsaRunAsPPL){'Yes'}else{'No'}) |"
+            ah "| Credential Guard | $(if($fl.credentialGuardEnabled){'Yes'}else{'No'}) |"
+            ah "| WDigest Caching | $(if($fl.wdigestCaching){'ENABLED'}else{'Disabled'}) |"
+            ah "| SMBv1 | $(if($fl.smb1Enabled){'ENABLED'}else{'Disabled'}) |"
+            ah "| SMB Signing Required | $(if($fl.smbSigningRequired){'Yes'}else{'No'}) |"
+            ah "| LDAP Signing Required | $(if($fl.ldapSigningRequired){'Yes'}else{'No'}) |"
+            ah "| LAPS | $(if($fl.lapsVersion -eq 'none'){'Not deployed'}else{$fl.lapsVersion}) |"
+            ah "| Print Spooler | $(if($fl.printSpoolerRunning){'Running'}else{'Stopped'}) |"
+            ah "| WebClient | $(if($fl.webClientRunning){'Running'}else{'Stopped'}) |"
+            ah "| RDP | $(if($fl.rdpEnabled){'Enabled'}else{'Disabled'}) $(if($fl.rdpEnabled -and -not $fl.rdpNLARequired){'NO NLA'}elseif($fl.rdpEnabled){'NLA'}else{''}) |"
+            ah "| LLMNR | $(if($fl.llmnrEnabled){'Enabled'}else{'Disabled'}) |"
+            ah "| NBT-NS | $(if($fl.nbtNSEnabled){'Enabled'}else{'Disabled'}) |"
             ah ""
         }
         if ($r.findings -and $r.findings.Count -gt 0) {
@@ -435,7 +434,7 @@ if (-not $caInv) {
         if ($ca.enrollmentServers) {
             ac "**Enrollment URIs:**"
             foreach ($uri in $ca.enrollmentServers) {
-                $httpWarn = if ($uri.isHttp) { ' ⚠️ HTTP (ESC8 risk)' } else { '' }
+                $httpWarn = if ($uri.isHttp) { ' [ESC8: HTTP endpoint]' } else { '' }
                 ac "- ``$($uri.uri)`` (auth: $($uri.authType))$httpWarn"
             }
             ac ""
@@ -451,8 +450,8 @@ if (-not $caInv) {
         ac "|----------|--------|--------------------------|-------------------|------|"
         foreach ($tr in $tmplRecords | Sort-Object { $tr.attributes.cn }) {
             $ta = $tr.attributes
-            $ess = if ($ta.enrolleeSupplies) { '⚠️ YES' } else { 'No' }
-            $appr= if ($ta.requiresApproval) { '✅ Yes' } else { 'No' }
+            $ess = if ($ta.enrolleeSupplies) { 'YES' } else { 'No' }
+            $appr= if ($ta.requiresApproval) { 'Yes' } else { 'No' }
             $ekus= if ($ta.ekus) { $ta.ekus -join ', ' } else { 'none' }
             ac "| $($ta.displayName) | v$($ta.schemaVersion) | $ess | $appr | $ekus |"
         }
@@ -493,7 +492,7 @@ if ($dnsZones.Count -eq 0) {
     ad "|------|----------------|--------------|----------------|------------------|"
     foreach ($z in $dnsZones | Sort-Object { $z.attributes.zoneName }) {
         $za = $z.attributes
-        $dynWarn = if ($za.dynamicUpdate -eq 'Nonsecure') { '⚠️ Nonsecure' } elseif ($za.dynamicUpdate) { $za.dynamicUpdate } else { '—' }
+        $dynWarn = if ($za.dynamicUpdate -eq 'Nonsecure') { 'Nonsecure [!]' } elseif ($za.dynamicUpdate) { $za.dynamicUpdate } else { '—' }
         $orphans = if ($za.orphanRecordCount) { $za.orphanRecordCount } else { '—' }
         $new24h  = if ($za.newRecordsLast24h)  { $za.newRecordsLast24h  } else { '0' }
         ad "| $($za.zoneName) | $dynWarn | $($za.recordCount) | $orphans | $new24h |"
@@ -536,13 +535,13 @@ if (-not $gpoInv) {
         ag ""
         ag "| Control | GPO Coverage |"
         ag "|---------|-------------|"
-        ag "| WDigest Disabled | $(if($sa.wdigestDisabledByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| LLMNR Disabled | $(if($sa.llmnrDisabledByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| SMBv1 Disabled | $(if($sa.smb1DisabledByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| LSA RunAsPPL | $(if($sa.lsaPPLByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| Screensaver Lock | $(if($sa.screensaverLockByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| Print Spooler Disabled (DCs) | $(if($sa.spoolerDisabledByGPO){'✅'}else{'❌ No GPO'}) |"
-        ag "| Advanced Audit Policy | $(if($sa.advancedAuditConfigured){'✅'}else{'❌ No GPO'}) |"
+        ag "| WDigest Disabled | $(if($sa.wdigestDisabledByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| LLMNR Disabled | $(if($sa.llmnrDisabledByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| SMBv1 Disabled | $(if($sa.smb1DisabledByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| LSA RunAsPPL | $(if($sa.lsaPPLByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| Screensaver Lock | $(if($sa.screensaverLockByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| Print Spooler Disabled (DCs) | $(if($sa.spoolerDisabledByGPO){'Yes'}else{'No GPO'}) |"
+        ag "| Advanced Audit Policy | $(if($sa.advancedAuditConfigured){'Yes'}else{'No GPO'}) |"
         ag ""
     }
 
@@ -552,7 +551,7 @@ if (-not $gpoInv) {
     ag "| GPO Name | GUID | Version | Last Changed | Disabled |"
     ag "|----------|------|---------|--------------|---------|"
     foreach ($gpo in $ga.gpoList | Sort-Object displayName) {
-        $dis = if ($gpo.disabled) { '❌ Disabled' } else { '' }
+        $dis = if ($gpo.disabled) { 'Disabled' } else { '' }
         ag "| $($gpo.displayName) | ``$($gpo.guid)`` | $($gpo.versionNumber) | $($gpo.whenChanged) | $dis |"
     }
     ag ""

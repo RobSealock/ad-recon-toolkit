@@ -2,6 +2,53 @@
 # MinPrivilege: T0 (needs domain user at minimum; T0 held = run elevated).
 # Binary: tools\bin\SharpHound.exe  (fetched by Install-Prereqs.ps1)
 
+# BloodHound CE API key format in settings: "tokenId:tokenKey"
+# tokenId and tokenKey are generated from the BH CE UI (Administration → API Keys).
+function _BHCE_SignedHeaders {
+    param([string]$Method, [string]$UriPath, [string]$TokenId, [string]$TokenKey, [byte[]]$Body = @())
+    $dateStr = (Get-Date).ToUniversalTime().ToString('o')
+    $sha256   = [System.Security.Cryptography.SHA256]::Create()
+    $digest   = [BitConverter]::ToString($sha256.ComputeHash($Body)).Replace('-','').ToLower()
+    $signStr  = "$dateStr`n$($Method.ToUpper())`n$UriPath`n$digest"
+    $keyBytes = [System.Text.Encoding]::UTF8.GetBytes($TokenKey)
+    $hmac     = [System.Security.Cryptography.HMACSHA256]::new($keyBytes)
+    $sig      = [Convert]::ToBase64String($hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($signStr)))
+    return @{
+        'Authorization' = "bhesignature $TokenId"
+        'RequestDate'   = $dateStr
+        'Signature'     = $sig
+    }
+}
+
+function _BHCE_Upload {
+    param([string]$ApiUrl, [string]$ApiKey, [string]$ZipPath)
+    $parts = $ApiKey -split ':', 2
+    if ($parts.Count -ne 2) { throw "BloodHoundApiKey must be 'tokenId:tokenKey' format" }
+    $tokenId  = $parts[0]
+    $tokenKey = $parts[1]
+    $base     = $ApiUrl.TrimEnd('/')
+
+    # Start upload job
+    $startPath = '/api/v2/file-upload/start'
+    $h = _BHCE_SignedHeaders -Method 'POST' -UriPath $startPath -TokenId $tokenId -TokenKey $tokenKey
+    $resp = Invoke-RestMethod -Uri "$base$startPath" -Method POST -Headers $h -ContentType 'application/json' -Body '{}'
+    $jobId = $resp.data.id
+
+    # Upload zip
+    $zipBytes   = [System.IO.File]::ReadAllBytes($ZipPath)
+    $uploadPath = "/api/v2/file-upload/$jobId"
+    $h = _BHCE_SignedHeaders -Method 'POST' -UriPath $uploadPath -TokenId $tokenId -TokenKey $tokenKey -Body $zipBytes
+    $h['Content-Type'] = 'application/zip'
+    Invoke-RestMethod -Uri "$base$uploadPath" -Method POST -Headers $h -Body $zipBytes | Out-Null
+
+    # Finalise
+    $endPath = "/api/v2/file-upload/$jobId/end"
+    $h = _BHCE_SignedHeaders -Method 'POST' -UriPath $endPath -TokenId $tokenId -TokenKey $tokenKey
+    Invoke-RestMethod -Uri "$base$endPath" -Method POST -Headers $h | Out-Null
+
+    return $jobId
+}
+
 function _SharpHound_Collect {
     param($RunContext, $Settings, $RunRoot)
 
@@ -43,9 +90,21 @@ function _SharpHound_Collect {
             collectionNote = 'Import the zip into BloodHound CE for attack-path analysis. API upload not yet implemented.'
         }
 
-        # BloodHound CE API upload (optional)
-        if ($Settings['BloodHoundApiUrl'] -and $zipFile) {
-            $attrs['uploadStatus'] = 'not-implemented — see New-BHUpload.ps1 in a future milestone'
+        # BloodHound CE API upload (optional — requires BloodHoundApiUrl and BloodHoundApiKey in settings)
+        if ($Settings['BloodHoundApiUrl'] -and $Settings['BloodHoundApiKey'] -and $zipFile) {
+            try {
+                Write-Host "         Uploading to BloodHound CE at $($Settings['BloodHoundApiUrl'])..."
+                $jobId = _BHCE_Upload -ApiUrl $Settings['BloodHoundApiUrl'] `
+                                      -ApiKey $Settings['BloodHoundApiKey'] `
+                                      -ZipPath $zipFile.FullName
+                $attrs['uploadStatus'] = "uploaded — job $jobId"
+                Write-Host "         BloodHound CE upload complete (job $jobId)"
+            } catch {
+                $attrs['uploadStatus'] = "upload failed: $_"
+                Write-Warning "[SharpHound] BloodHound CE upload failed: $_"
+            }
+        } elseif ($Settings['BloodHoundApiUrl'] -and $zipFile) {
+            $attrs['uploadStatus'] = 'skipped — BloodHoundApiKey not set in settings.local.psd1'
         }
 
         $records.Add((New-ReconRecord `

@@ -86,8 +86,9 @@ function Load-RunRecords {
     $records = @{}
     Get-ChildItem -Path $RunPath -Filter '*.json' -Exclude 'run-manifest.json' |
         ForEach-Object {
-            $itemsParsed = ConvertFrom-Json (Get-Content $_.FullName -Raw -Encoding UTF8)
-            $items = @($itemsParsed)
+            # NDJSON format: one JSON object per line (see framework\Repository.ps1).
+            $items = @(Get-Content $_.FullName -Encoding UTF8 |
+                Where-Object { $_.Trim() } | ForEach-Object { ConvertFrom-Json $_ })
             foreach ($r in $items) {
                 if (-not $IncludeState -and $r.category -eq 'state') { continue }
                 if ($r.recordType -in @('collection-error','review-required')) { continue }
@@ -145,6 +146,20 @@ $changed = foreach ($key in $common) {
     }
 }
 
+# ── Finding-level diff ────────────────────────────────────────────────────────
+# Compares finding IDs on records common to both runs — surfaces findings that
+# appeared (new) or resolved (gone) between runs. Attribute drift alone does not
+# capture this because findings live in record.findings[], not record.attributes.
+$findingChanges = foreach ($key in $common) {
+    $idsA = @($recA[$key].findings | Where-Object { $_ } | ForEach-Object { $_.id })
+    $idsB = @($recB[$key].findings | Where-Object { $_ } | ForEach-Object { $_.id })
+    $newF      = @($idsB | Where-Object { $_ -notin $idsA })
+    $resolvedF = @($idsA | Where-Object { $_ -notin $idsB })
+    if ($newF.Count -gt 0 -or $resolvedF.Count -gt 0) {
+        @{ Key = $key; New = $newF; Resolved = $resolvedF; Record = $recA[$key] }
+    }
+}
+
 # ── Report ────────────────────────────────────────────────────────────────────
 $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add("# Config Drift Report")
@@ -162,6 +177,7 @@ $lines.Add("|---|---|")
 $lines.Add("| Added (new in compare) | $($added.Count) |")
 $lines.Add("| Removed (absent in compare) | $($removed.Count) |")
 $lines.Add("| Changed (attribute drift) | $($changed.Count) |")
+$lines.Add("| Finding changes (new/resolved) | $($findingChanges.Count) record(s) |")
 $lines.Add("")
 
 if ($added) {
@@ -202,8 +218,24 @@ if ($changed) {
     }
 }
 
-if (-not $added -and -not $removed -and -not $changed) {
-    $lines.Add("_No configuration drift detected between these two runs._")
+if ($findingChanges) {
+    $lines.Add("## Finding Changes")
+    $lines.Add("")
+    $lines.Add("_Finding IDs that appeared or resolved on records common to both runs._")
+    $lines.Add("_Findings on newly added or removed records are implied by the Added/Removed sections above._")
+    $lines.Add("")
+    foreach ($fc in $findingChanges | Sort-Object { $_.Key }) {
+        $r = $fc.Record
+        $lines.Add("### $($r.collector) / $($r.objectType) — ``$($r.stableId)``")
+        $lines.Add("")
+        foreach ($fid in $fc.New)      { $lines.Add("- **NEW** ``$fid``") }
+        foreach ($fid in $fc.Resolved) { $lines.Add("- ~~``$fid``~~ resolved") }
+        $lines.Add("")
+    }
+}
+
+if (-not $added -and -not $removed -and -not $changed -and -not $findingChanges) {
+    $lines.Add("_No configuration drift or finding changes detected between these two runs._")
     $lines.Add("")
 }
 
@@ -217,11 +249,12 @@ if (-not $OutputPath) {
 }
 $report | Set-Content $OutputPath -Encoding UTF8
 Write-Host "[Diff] Report → $OutputPath"
-Write-Host "[Diff] Added: $($added.Count)  Removed: $($removed.Count)  Changed: $($changed.Count)"
+Write-Host "[Diff] Added: $($added.Count)  Removed: $($removed.Count)  Changed: $($changed.Count)  FindingChanges: $($findingChanges.Count)"
 
 return [PSCustomObject]@{
-    AddedCount   = $added.Count
-    RemovedCount = $removed.Count
-    ChangedCount = $changed.Count
-    ReportPath   = $OutputPath
+    AddedCount          = $added.Count
+    RemovedCount        = $removed.Count
+    ChangedCount        = $changed.Count
+    FindingChangesCount = $findingChanges.Count
+    ReportPath          = $OutputPath
 }

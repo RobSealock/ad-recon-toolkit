@@ -82,11 +82,9 @@ Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
     ForEach-Object {
         $currentFile = $_
         try {
-            # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json)
-            # does not reliably flatten a multi-element array (see
-            # framework\Repository.ps1 for the full explanation).
-            $itemsParsed = ConvertFrom-Json (Get-Content $currentFile.FullName -Raw -Encoding UTF8)
-            $items = @($itemsParsed)
+            # NDJSON format: one JSON object per line (see framework\Repository.ps1).
+            $items = @(Get-Content $currentFile.FullName -Encoding UTF8 |
+                Where-Object { $_.Trim() } | ForEach-Object { ConvertFrom-Json $_ })
             foreach ($r in $items) {
                 $recordCount++
                 $collector = if ($r.collector) { $r.collector } else { 'unknown' }

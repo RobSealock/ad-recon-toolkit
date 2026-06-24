@@ -100,6 +100,16 @@ foreach ($c in $collectors) {
 Save-RunManifest  -RunContext $RunContext -RunRoot $paths.RunRoot -CollectorStatus $statusLog.ToArray()
 Update-RunIndex   -RepoRoot $RunContext.RepoRoot -RunId $RunContext.RunId -RunRoot $paths.RunRoot
 
+# Auto drift comparison — compares against the previous run if one exists
+$diffScript = Join-Path $PSScriptRoot 'diff\Compare-ReconRuns.ps1'
+if (Test-Path $diffScript) {
+    try {
+        & $diffScript -AutoSelectPrevious -NewRunId $RunContext.RunId -RepoRoot $RunContext.RepoRoot
+    } catch {
+        Write-Warning "[Orchestrator] Drift comparison skipped: $_"
+    }
+}
+
 Write-Host ""
 Write-Host "[Orchestrator] Complete — $($paths.RunRoot)"
 Write-Host ""

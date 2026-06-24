@@ -68,11 +68,10 @@ Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
     Where-Object { $_.Name -ne 'run-manifest.json' } |
     ForEach-Object {
         try {
-            # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json)
-            # does not reliably flatten a multi-element array (see
-            # framework\Repository.ps1 for the full explanation).
-            $itemsParsed = ConvertFrom-Json (Get-Content $_.FullName -Raw -Encoding UTF8)
-            @($itemsParsed) | ForEach-Object {
+            # NDJSON format: one JSON object per line (see framework\Repository.ps1).
+            $items = @(Get-Content $_.FullName -Encoding UTF8 |
+                Where-Object { $_.Trim() } | ForEach-Object { ConvertFrom-Json $_ })
+            $items | ForEach-Object {
                 $r = $_
                 if ($r.findings) {
                     foreach ($f in $r.findings) {

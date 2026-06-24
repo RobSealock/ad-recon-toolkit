@@ -40,8 +40,10 @@ The script runs a user-context pass first, then prompts to re-launch elevated fo
 ```
 output\
   runs\<RunId>\           ← normalized JSON records + run manifest
-  reports\                ← Markdown risk register
-  diffs\                  ← config drift between runs
+  reports\                ← Markdown risk register (auto-generated)
+  validation\<RunId>\     ← per-finding validation cards (auto-generated)
+  diffs\                  ← config drift between runs (auto-generated)
+  wiki\<RunId>\           ← Markdown wiki pages (manual: .\report\New-WikiPages.ps1)
 ```
 
 ## Compare two runs
@@ -49,6 +51,25 @@ output\
 ```powershell
 .\diff\Compare-ReconRuns.ps1 -RunAPath <RunId-A> -RunBPath <RunId-B>
 ```
+
+Drift reports are also generated automatically at the end of each full run — `Invoke-ADRecon.ps1` calls `Compare-ReconRuns.ps1 -AutoSelectPrevious` after every collection pass.
+
+## Standalone DNS check
+
+Run a DNS-only assessment without triggering the full pipeline:
+
+```powershell
+# Standard DNS-only run
+.\Invoke-DNSCheck.ps1
+
+# Attach to an existing run's directory (shared RunId)
+.\Invoke-DNSCheck.ps1 -RunId '<existing-RunId>'
+
+# Print all findings inline
+.\Invoke-DNSCheck.ps1 -ShowFindings
+```
+
+Output lands in the same normalized JSON schema as a full run — the diff engine and risk register work against it. Useful for ad-hoc DNS posture checks or post-change verification after DNS configuration changes.
 
 ## Tool downloads
 

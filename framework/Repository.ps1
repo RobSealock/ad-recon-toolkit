@@ -24,25 +24,12 @@ function Save-ReconRecord {
         [Parameter(Mandatory)][PSCustomObject]$Record,
         [Parameter(Mandatory)][string]$RunRoot
     )
-    # One file per (collector, objectType) pair — append to JSON array.
+    # One file per (collector, objectType) pair — NDJSON: one JSON object per line.
+    # Append-only so each save is O(1) regardless of how many records are in the file.
     $fileName = "$($Record.collector).$($Record.objectType).json"
     $filePath  = Join-Path $RunRoot $fileName
-    # Under Windows PowerShell 5.1, @(if (...) { Cmd } else { ... }) does not
-    # reliably flatten a command's array output -- ConvertFrom-Json emits its
-    # parsed array via a single (non-enumerated) WriteObject call, so @()
-    # wraps that one call's result as ONE element instead of unrolling it,
-    # nesting the existing array a level deeper on every save after the 2nd.
-    # (Not an issue under pwsh/.NET Core, where this enumerates correctly.)
-    # Assigning to a plain variable first, then @()-wrapping that variable
-    # separately, avoids it -- @() reliably flattens an already-materialized
-    # array sitting in a variable.
-    if (Test-Path $filePath) {
-        $parsed   = ConvertFrom-Json (Get-Content $filePath -Raw -Encoding UTF8)
-        $existing = @($parsed)
-    } else {
-        $existing = @()
-    }
-    ($existing + $Record) | ConvertTo-Json -Depth 20 -Compress | Set-Content $filePath -Encoding UTF8
+    $line = $Record | ConvertTo-Json -Depth 20 -Compress
+    Add-Content -Path $filePath -Value $line -Encoding UTF8
 }
 
 function Save-RunManifest {
@@ -73,9 +60,9 @@ function Update-RunIndex {
         [Parameter(Mandatory)][string]$RunRoot
     )
     $indexPath = Join-Path $RepoRoot 'output\run-index.json'
-    # See Save-ReconRecord above for why this is a two-step assign-then-wrap
-    # rather than @(if (...) { Cmd } else { ... }) -- the latter doesn't
-    # reliably flatten ConvertFrom-Json's array output under PS5.1.
+    # run-index.json is a JSON array (not NDJSON) — it's written once per run, not
+    # appended per-record, so the O(n²) concern does not apply. Two-step assign-then-
+    # wrap avoids PS5.1's ConvertFrom-Json array-flattening issue on read.
     if (Test-Path $indexPath) {
         $parsed = ConvertFrom-Json (Get-Content $indexPath -Raw -Encoding UTF8)
         $index  = @($parsed)

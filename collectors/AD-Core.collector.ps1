@@ -1831,13 +1831,14 @@ function _ADCore_Collect {
     $altSecIds = _ADC_CollectAltSecurityIdentities -DomainDn $domainDn
     if ($altSecIds.Count -gt 0) {
         $enabledWeak = @($altSecIds | Where-Object { $_.enabled })
-        foreach ($a in $enabledWeak) {
-            $forms = $a.weakMappings -join '; '
-            $records.Add((New-Finding `
+        if ($enabledWeak.Count -gt 0) {
+            $sample = ($enabledWeak | Select-Object -First 3 | ForEach-Object { $_.cn }) -join ', '
+            if ($enabledWeak.Count -gt 3) { $sample += " (and $($enabledWeak.Count - 3) more)" }
+            $findings.Add((New-Finding `
                 -Id          'ADC-024' `
                 -Severity    'High' `
                 -Technique   'T1649' `
-                -Description "Account '$($a.cn)' ($($a.dn)) has altSecurityIdentities with weak mapping form(s): $forms. Weak forms X509RFC822 (email) and X509IssuerSubject (issuer+subject) are attacker-controllable — a certificate matching these values can be used to authenticate as this account (ESC14). Strong forms (X509SKI, X509PublicKey, Kerberos) are acceptable. Action: convert to strong mapping forms or remove the altSecurityIdentities attribute if unused." `
+                -Description "$($enabledWeak.Count) enabled account(s) have altSecurityIdentities with weak certificate mapping forms (ESC14): $sample. Weak forms X509RFC822 (email) and X509IssuerSubject (issuer+subject) are attacker-controllable — a certificate matching these values authenticates as the target account. Action: convert to strong mapping forms (X509SKI, X509PublicKey, Kerberos) or remove unused altSecurityIdentities attributes." `
                 -Reference   'https://attack.mitre.org/techniques/T1649/'))
         }
         $records.Add((New-ReconRecord `
