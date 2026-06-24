@@ -26,14 +26,18 @@
 
 .PARAMETER NoGitCommit
     Do not commit run output to git after collection.
+
+.PARAMETER NonInteractive
+    Skip post-run option prompts. Use for scheduled tasks or CI pipelines.
 #>
 [CmdletBinding()]
 param(
-    [string]$RepoRoot      = $PSScriptRoot,
+    [string]$RepoRoot        = $PSScriptRoot,
     [switch]$ElevatedPass,
-    [string]$RunId         = $null,
+    [string]$RunId           = $null,
     [switch]$SkipBootstrap,
-    [switch]$NoGitCommit
+    [switch]$NoGitCommit,
+    [switch]$NonInteractive
 )
 
 $ErrorActionPreference = 'Continue'
@@ -142,8 +146,79 @@ if (-not $NoGitCommit -and $settings['GitCommitRuns']) {
     Invoke-GitCommitRun -RepoRoot $RepoRoot -RunId $ctx.RunId
 }
 
+# ── Assessment complete banner ────────────────────────────────────────────────
 Write-Host ''
-Write-Host "[Done] Assessment complete."
+Write-Host '════════════════════════════════════════════════════════════════'
+Write-Host '  Assessment complete'
+Write-Host "  Run ID     : $($ctx.RunId)"
 Write-Host "  Run output : $($paths.RunRoot)"
 Write-Host "  Reports    : $($paths.Reports)"
+Write-Host "  Validation : $(Join-Path $RepoRoot "output\validation\$($ctx.RunId)")"
+Write-Host '════════════════════════════════════════════════════════════════'
 Write-Host ''
+
+# ── PurpleKnight reminder ─────────────────────────────────────────────────────
+Write-Host '  REMINDER — PurpleKnight (manual step required)'
+Write-Host '  Run PurpleKnight against this domain and save the CSV/HTML'
+Write-Host "  export to:  $(Join-Path $RepoRoot 'output\purpleknight\')"
+Write-Host '  The PurpleKnight collector will pick it up on the next full run.'
+Write-Host ''
+
+# ── Post-run options ──────────────────────────────────────────────────────────
+# Suppressed when -NonInteractive is set, -ElevatedPass is set (UAC window),
+# or the host cannot accept keyboard input.
+$canPrompt = -not $NonInteractive -and -not $ElevatedPass -and [Environment]::UserInteractive
+if ($canPrompt) {
+    $loop = $true
+    while ($loop) {
+        Write-Host '────────────────────────────────────────────────────────────────'
+        Write-Host '  Post-run options:'
+        Write-Host '    [W]  Generate wiki pages'
+        Write-Host '    [T]  Run Pester framework self-tests'
+        Write-Host '    [D]  Show drift summary'
+        Write-Host '    [Enter]  Exit'
+        Write-Host '────────────────────────────────────────────────────────────────'
+        $choice = (Read-Host '  Choice').Trim().ToUpper()
+        Write-Host ''
+        switch ($choice) {
+            'W' {
+                $wikiScript = Join-Path $RepoRoot 'report\New-WikiPages.ps1'
+                if (Test-Path $wikiScript) {
+                    & $wikiScript -RunRoot $paths.RunRoot -RepoRoot $RepoRoot
+                } else {
+                    Write-Warning 'report\New-WikiPages.ps1 not found.'
+                }
+            }
+            'T' {
+                $testFile = Join-Path $RepoRoot 'tests\framework.tests.ps1'
+                if (-not (Test-Path $testFile)) {
+                    Write-Warning "Test file not found: $testFile"
+                } elseif (-not (Get-Module -ListAvailable -Name Pester)) {
+                    Write-Warning 'Pester not found. Install with: Install-Module Pester -Scope CurrentUser'
+                } else {
+                    Invoke-Pester $testFile -Output Detailed
+                }
+            }
+            'D' {
+                $diffDir = Join-Path $RepoRoot 'output\diffs'
+                $latest  = Get-ChildItem $diffDir -Filter '*.md' -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($latest) {
+                    $inSummary = $false
+                    foreach ($l in (Get-Content $latest.FullName)) {
+                        if ($l -match '^## Summary')                            { $inSummary = $true }
+                        if ($inSummary -and $l -match '^## ' -and $l -notmatch '^## Summary') { break }
+                        if ($inSummary)                                         { Write-Host "  $l" }
+                    }
+                    Write-Host ''
+                    Write-Host "  Full report: $($latest.FullName)"
+                } else {
+                    Write-Host '  No drift report found — a prior run is needed as a baseline.'
+                }
+            }
+            ''  { $loop = $false }
+            default { Write-Host "  Unknown option. Enter W, T, D, or press Enter to exit." }
+        }
+        Write-Host ''
+    }
+}
