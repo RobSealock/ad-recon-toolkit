@@ -57,7 +57,10 @@ if ($AutoSelectPrevious) {
         Write-Host "[Diff] No run index found — skipping drift comparison."
         return $null
     }
-    $index = @(Get-Content $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+    # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json) does not
+    # reliably flatten a multi-element array (see framework\Repository.ps1).
+    $indexParsed = ConvertFrom-Json (Get-Content $indexPath -Raw -Encoding UTF8)
+    $index = @($indexParsed)
     $prior = @($index | Where-Object { $_.runId -ne $NewRunId } | Sort-Object runId -Descending | Select-Object -First 1)
     if (-not $prior) {
         Write-Host "[Diff] Only one run in index — no baseline for comparison. Skipping."
@@ -83,7 +86,8 @@ function Load-RunRecords {
     $records = @{}
     Get-ChildItem -Path $RunPath -Filter '*.json' -Exclude 'run-manifest.json' |
         ForEach-Object {
-            $items = @(Get-Content $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+            $itemsParsed = ConvertFrom-Json (Get-Content $_.FullName -Raw -Encoding UTF8)
+            $items = @($itemsParsed)
             foreach ($r in $items) {
                 if (-not $IncludeState -and $r.category -eq 'state') { continue }
                 if ($r.recordType -in @('collection-error','review-required')) { continue }

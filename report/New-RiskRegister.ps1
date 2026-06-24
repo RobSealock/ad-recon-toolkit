@@ -82,7 +82,11 @@ Get-ChildItem -Path $RunRoot -Filter '*.json' -Depth 0 |
     ForEach-Object {
         $currentFile = $_
         try {
-            $items = @(Get-Content $currentFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+            # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json)
+            # does not reliably flatten a multi-element array (see
+            # framework\Repository.ps1 for the full explanation).
+            $itemsParsed = ConvertFrom-Json (Get-Content $currentFile.FullName -Raw -Encoding UTF8)
+            $items = @($itemsParsed)
             foreach ($r in $items) {
                 $recordCount++
                 $collector = if ($r.collector) { $r.collector } else { 'unknown' }
@@ -147,7 +151,7 @@ if ($runManifest) {
     Add "> **Run Host:** $($runManifest.runHost)"
     Add "> **Operator:** $($runManifest.operator)"
     Add "> **Start Time:** $($runManifest.startTime)"
-    Add "> **Collectors Run:** $($runManifest.collectorsRun -join ', ')"
+    Add "> **Collectors Run:** $(($runManifest.collectorStatus | ForEach-Object { $_.collector }) -join ', ')"
 }
 Add "> **Generated:** $(Get-Date -Date ([DateTime]::UtcNow) -Format 'yyyy-MM-dd HH:mm:ss UTC')"
 Add ""
@@ -187,7 +191,7 @@ if ($tier0CritHigh.Count -gt 0) {
     Add "|---|----|----|----|----|-----|"
     $i = 1
     foreach ($f in $tier0CritHigh) {
-        $tech = if ($f.Technique -ne '—') { "[$($f.Technique)](https://attack.mitre.org/techniques/$($f.Technique.Replace('.','/')))/" } else { '—' }
+        $tech = if ($f.Technique -ne '—') { "[$($f.Technique)](https://attack.mitre.org/techniques/$($f.Technique.Replace('.','/'))/)" } else { '—' }
         $desc = $f.Description -replace '\|', '\\|' -replace '\n',' '
         Add "| $i | $($f.FindingId) | $($severityBadge[$f.Severity]) | $($f.Collector) | $tech | $desc |"
         $i++
@@ -239,9 +243,13 @@ foreach ($collector in ($collectorSet | Sort-Object)) {
 }
 
 # ── ATT&CK Technique Frequency ────────────────────────────────────────────────
+# Group-Object -Property <name> (string form) does not resolve hashtable keys
+# under Windows PowerShell 5.1 -- $allFindings is a List[hashtable], so this
+# silently grouped everything into one blank-named group. The script-block
+# form ({ $_.Technique }) resolves correctly on both PS5.1 and pwsh.
 $techniqueGroups = $allFindings |
     Where-Object { $_.Technique -ne '—' } |
-    Group-Object Technique |
+    Group-Object -Property { $_.Technique } |
     Sort-Object Count -Descending |
     Select-Object -First 20
 
@@ -254,7 +262,7 @@ if ($techniqueGroups) {
     Add "|-----------|------|-------|"
     foreach ($tg in $techniqueGroups) {
         $techName = ($allFindings | Where-Object { $_.Technique -eq $tg.Name } | Select-Object -First 1).TechniqueName
-        Add "| [$($tg.Name)](https://attack.mitre.org/techniques/$($tg.Name.Replace('.','/')))/ | $techName | $($tg.Count) |"
+        Add "| [$($tg.Name)](https://attack.mitre.org/techniques/$($tg.Name.Replace('.','/'))/) | $techName | $($tg.Count) |"
     }
     Add ""
 }
@@ -290,7 +298,7 @@ $aiPayload = @{
         }
     )
 }
-$aiPayload | ConvertTo-Json -Depth 5 -Compress
+Add ($aiPayload | ConvertTo-Json -Depth 5 -Compress)
 Add '```'
 Add ""
 Add "---"

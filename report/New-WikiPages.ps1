@@ -64,8 +64,11 @@ function Load-RunRecords {
         Where-Object { $_.Name -ne 'run-manifest.json' } |
         ForEach-Object {
             try {
-                @(Get-Content $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json) |
-                ForEach-Object { $records.Add($_) }
+                # Two-step assign-then-wrap: under PS5.1, @(Cmd | ConvertFrom-Json)
+                # does not reliably flatten a multi-element array (see
+                # framework\Repository.ps1 for the full explanation).
+                $itemsParsed = ConvertFrom-Json (Get-Content $_.FullName -Raw -Encoding UTF8)
+                @($itemsParsed) | ForEach-Object { $records.Add($_) }
             } catch {}
         }
     return $records
