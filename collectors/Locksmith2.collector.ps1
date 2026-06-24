@@ -32,9 +32,11 @@ function _Locksmith_Collect {
         Write-Host "         Running Locksmith against $($RunContext.Domain)..."
         $locksmithOutput = Join-Path $artDir 'locksmith-output.json'
 
+        # Locksmith has no -Domain/-Forest parameter (Mode/Scans/OutputPath/Credential
+        # only) -- it always auto-detects the current forest via the AD module, so it
+        # only works from a domain-joined host (or one in this forest's resolution path).
         # Locksmith returns finding objects; output to JSON artifact
-        $findings = Invoke-Locksmith -Domain $RunContext.Domain -OutputPath $artDir `
-            -Scans All 2>&1
+        $findings = Invoke-Locksmith -OutputPath $artDir -Scans All 2>&1
 
         $lockFindings = [System.Collections.Generic.List[object]]::new()
         $count = 0
@@ -68,6 +70,7 @@ function _Locksmith_Collect {
             -RunId          $runId))
 
     } catch {
+        Write-Warning "[Locksmith2] Failed: $_"
         $records.Add((New-CollectionError -Collector 'Locksmith2' `
             -Target $RunContext.Domain -ErrorMessage $_.ToString() -RunId $runId))
     }

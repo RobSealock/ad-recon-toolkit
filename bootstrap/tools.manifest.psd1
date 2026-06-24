@@ -318,6 +318,24 @@
     }
 
     # =========================================================================
+    # PORTABLE PYTHON  —  fallback runtime for pip packages (e.g. Certipy) when
+    # no real Python is on PATH. Windows ships a python.exe "App Execution
+    # Alias" stub that redirects to the Microsoft Store; Install-Prereqs.ps1
+    # rejects that stub and falls back to this vendored copy. Inert if a real
+    # system Python/pip is already available — never overrides it.
+    # The official "Windows embeddable package" — zip-extract, no installer,
+    # no registry changes. Vendored under tools\python\ (git-ignored).
+    # =========================================================================
+
+    PortablePython = @{
+        Version   = '3.12.10'
+        Url       = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
+        Sha256    = '4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3'
+        GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
+        TargetDir = 'tools\python'
+    }
+
+    # =========================================================================
     # CISA KEV DATASET  —  auto-fetched, refreshed if older than 7 days
     # =========================================================================
 

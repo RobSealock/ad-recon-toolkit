@@ -1,6 +1,7 @@
 # Vendored binaries — fetched and staged at runtime by Install-Prereqs.ps1
 tools/bin/
 tools/kev/
+tools/python/
 # PS modules are committed directly (small, no build step required)
 
 # Oversized executables — excluded (exceed GitHub 100 MB limit); restored at runtime

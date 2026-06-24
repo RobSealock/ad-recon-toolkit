@@ -149,7 +149,7 @@ if ($runManifest) {
     Add "> **Start Time:** $($runManifest.startTime)"
     Add "> **Collectors Run:** $($runManifest.collectorsRun -join ', ')"
 }
-Add "> **Generated:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC' -AsUTC)"
+Add "> **Generated:** $(Get-Date -Date ([DateTime]::UtcNow) -Format 'yyyy-MM-dd HH:mm:ss UTC')"
 Add ""
 
 # ── Executive Summary ─────────────────────────────────────────────────────────
@@ -253,7 +253,6 @@ if ($techniqueGroups) {
     Add "| Technique | Name | Count |"
     Add "|-----------|------|-------|"
     foreach ($tg in $techniqueGroups) {
-        $mapping = if ($attackMappings.ContainsKey(($allFindings | Where-Object { $_.Technique -eq $tg.Name } | Select-Object -First 1).FindingId)) { '' } else { '' }
         $techName = ($allFindings | Where-Object { $_.Technique -eq $tg.Name } | Select-Object -First 1).TechniqueName
         Add "| [$($tg.Name)](https://attack.mitre.org/techniques/$($tg.Name.Replace('.','/')))/ | $techName | $($tg.Count) |"
     }

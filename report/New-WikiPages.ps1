@@ -133,7 +133,7 @@ if ($runManifest) {
     ai "| **Start Time** | $($runManifest.startTime) |"
     ai "| **Operator** | $($runManifest.operator) |"
 }
-ai "| **Generated** | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC' -AsUTC) |"
+ai "| **Generated** | $(Get-Date -Date ([DateTime]::UtcNow) -Format 'yyyy-MM-dd HH:mm:ss UTC') |"
 ai ""
 ai "## Finding Summary"
 ai ""

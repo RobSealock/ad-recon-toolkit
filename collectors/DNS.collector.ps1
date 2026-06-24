@@ -61,7 +61,10 @@ function _DNS_EnumerateZones {
             })
         }
     } catch { Write-Verbose "[DNS] Zone enumeration failed for $containerDn : $_" }
-    return ,$zones
+    # Bare return -- the only call site pipes this (| ForEach-Object), and a
+    # comma-protected return breaks piping the same way it protects assignment:
+    # the consumer's $_ becomes the whole List instead of each element.
+    return $zones
 }
 
 function _DNS_GetZoneNodes {
@@ -369,6 +372,12 @@ function _DNS_Collect {
         }
 
         # DNS-009: External forwarders
+        # Local (not script-scoped) and initialized unconditionally -- under
+        # Set-StrictMode -Version 2, referencing a variable that was never
+        # assigned at all (e.g. this try block fails before reaching the
+        # assignment below) throws, and script-scope would risk a stale
+        # value leaking into a later, unrelated call within the same session.
+        $dns009Finding = $null
         try {
             $cimArgs = Get-RemoteCimArgs -ComputerName $dnsServer
             $forwarders = Get-DnsServerForwarder @cimArgs -EA SilentlyContinue
@@ -385,7 +394,7 @@ function _DNS_Collect {
                     $allNew24h.Add("DNS-009: $dnsServer has public forwarders: $($publicForwarders -join ', ')") | Out-Null
                     # Forwarder finding goes into the domain-level summary findings (daFindings)
                     # We store it for later use since daFindings is built below
-                    $script:_dns009Finding = New-Finding -Id 'DNS-009' -Severity 'Medium' `
+                    $dns009Finding = New-Finding -Id 'DNS-009' -Severity 'Medium' `
                         -Technique 'T1590.002' `
                         -Description "DNS server '$dnsServer' has forwarders pointing to public/external IPs: $($publicForwarders -join ', '). Forwarding internal DNS queries to external resolvers exposes internal hostnames and query patterns externally, and may bypass internal split-brain DNS. Consider using internal forwarders or conditional forwarding only. External forwarders also expose the environment to DNS-based data exfiltration (covert channel via DNS queries)." `
                         -Reference 'https://attack.mitre.org/techniques/T1590/002/'
@@ -418,9 +427,8 @@ function _DNS_Collect {
         }
 
         # DNS-009: add forwarder finding if detected
-        if ($script:_dns009Finding) {
-            $daFindings.Add($script:_dns009Finding)
-            $script:_dns009Finding = $null
+        if ($dns009Finding) {
+            $daFindings.Add($dns009Finding)
         }
 
         # ── Summary record ────────────────────────────────────────────────────

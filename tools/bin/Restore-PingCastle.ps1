@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Reassembles PingCastle.exe and PingCastleAutoUpdater.exe from their
     split/zipped parts.

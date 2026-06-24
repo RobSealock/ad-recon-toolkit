@@ -20,7 +20,8 @@
 param(
     [Parameter(Mandatory)][string]$RepoRoot,
     [switch]$OfflineOnly,
-    [switch]$SkipRSAT
+    [switch]$SkipRSAT,
+    [switch]$SkipPortablePython
 )
 
 $ErrorActionPreference = 'Continue'
@@ -142,11 +143,79 @@ foreach ($mod in $manifest.PSModules) {
 # ── 3b. Pip packages ──────────────────────────────────────────────────────────
 Write-Step 'Checking pip packages...'
 
+# Fallback runtime for pip packages when no real Python/pip is on PATH.
+# Downloads the official Windows embeddable Python package (zip-extract, no
+# installer, no registry changes) to tools\python\, enables site-packages
+# (shipped disabled via ._pth), and bootstraps pip via get-pip.py. Inert --
+# returns immediately -- if a real interpreter is already usable.
+function Install-PortablePython {
+    param([hashtable]$Manifest, [string]$RepoRoot)
+    $pyDir = Join-Path $RepoRoot $Manifest.TargetDir
+    $pyExe = Join-Path $pyDir 'python.exe'
+    if (Test-Path $pyExe) { return $pyExe }
+
+    Write-Step "No usable system Python found — installing portable Python $($Manifest.Version) to $($Manifest.TargetDir)..."
+    $tmpZip = Join-Path $env:TEMP "python-embed-$([System.IO.Path]::GetRandomFileName()).zip"
+    try {
+        Invoke-WebRequest -Uri $Manifest.Url -OutFile $tmpZip -UseBasicParsing -ErrorAction Stop
+
+        if ($Manifest.Sha256 -notlike 'PLACEHOLDER*') {
+            $actual = (Get-FileHash $tmpZip -Algorithm SHA256).Hash
+            if ($actual -ne $Manifest.Sha256) {
+                throw "SHA256 mismatch on portable Python download: expected $($Manifest.Sha256), got $actual"
+            }
+        }
+
+        New-Item -ItemType Directory -Force -Path $pyDir | Out-Null
+        Expand-Archive -Path $tmpZip -DestinationPath $pyDir -Force
+
+        # Enable site-packages -- the embeddable package ships with
+        # "import site" commented out in its ._pth file, which disables
+        # pip/site-packages entirely until uncommented.
+        $pthFile = Get-ChildItem -Path $pyDir -Filter '*._pth' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($pthFile) {
+            # Python reads this file itself and chokes on a BOM. Set-Content
+            # -Encoding UTF8 writes one under Windows PowerShell 5.1 (no
+            # UTF8NoBOM option there) but not under pwsh -- write explicitly
+            # via .NET to get the same BOM-less result on both.
+            $newLines = (Get-Content $pthFile.FullName) -replace '^#\s*import site$', 'import site'
+            [System.IO.File]::WriteAllLines($pthFile.FullName, $newLines, [System.Text.UTF8Encoding]::new($false))
+        }
+
+        # Bootstrap pip (not bundled in the embeddable package)
+        $getPip = Join-Path $pyDir 'get-pip.py'
+        Invoke-WebRequest -Uri $Manifest.GetPipUrl -OutFile $getPip -UseBasicParsing -ErrorAction Stop
+        & $pyExe $getPip --no-warn-script-location --quiet
+        if ($LASTEXITCODE -ne 0) { throw "get-pip.py exited with code $LASTEXITCODE" }
+
+        Write-OK "Portable Python $($Manifest.Version) installed to $($Manifest.TargetDir)"
+        return $pyExe
+    } catch {
+        Write-Warn "Portable Python install failed: $_"
+        return $null
+    } finally {
+        Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+        $getPip = Join-Path $pyDir 'get-pip.py'
+        Remove-Item $getPip -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $pipPackages = @($manifest.PipPackages)
 if ($pipPackages.Count -gt 0) {
+    # Windows ships a python.exe/pip.exe "App Execution Alias" stub on PATH by
+    # default that just redirects to the Microsoft Store -- Get-Command finds
+    # it like a real interpreter, so explicitly reject anything resolving into
+    # WindowsApps before accepting it.
     $pip = $null
     foreach ($cmd in @('pip', 'pip3', 'python -m pip')) {
-        if (Get-Command ($cmd.Split(' ')[0]) -ErrorAction SilentlyContinue) { $pip = $cmd; break }
+        $found = Get-Command ($cmd.Split(' ')[0]) -ErrorAction SilentlyContinue
+        if ($found -and $found.Source -notmatch '\\WindowsApps\\') { $pip = $cmd; break }
+    }
+
+    $portablePyExe = $null
+    if (-not $pip -and -not $SkipPortablePython -and -not $OfflineOnly) {
+        $portablePyExe = Install-PortablePython -Manifest $manifest.PortablePython -RepoRoot $RepoRoot
+        if ($portablePyExe) { $pip = "$portablePyExe -m pip" }
     }
 
     if (-not $pip) {
@@ -187,8 +256,11 @@ if ($pipPackages.Count -gt 0) {
 
                 # Locate the installed exe in Python's Scripts directories
                 $candidates = @()
+                if ($portablePyExe) {
+                    $candidates += Join-Path (Split-Path $portablePyExe) "Scripts\$($pkg.ExeName)"
+                }
                 $pyObj = Get-Command 'python' -ErrorAction SilentlyContinue
-                $pyCmd = if ($pyObj) { $pyObj.Source } else { $null }
+                $pyCmd = if ($pyObj -and $pyObj.Source -notmatch '\\WindowsApps\\') { $pyObj.Source } else { $null }
                 if ($pyCmd) {
                     $pyDir = Split-Path $pyCmd
                     $candidates += Join-Path $pyDir "Scripts\$($pkg.ExeName)"

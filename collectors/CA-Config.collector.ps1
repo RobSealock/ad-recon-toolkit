@@ -457,6 +457,10 @@ function _CA_EvaluateFindings {
 
 function _CA_RunLocksmith {
     param([string]$ArtDir, [string]$RunId)
+    # Locksmith has no -Domain/-Forest parameter (Mode/Scans/OutputPath/Credential
+    # only) -- it always auto-detects the current forest via the AD module, so it
+    # only works from a domain-joined host (or one in this forest's resolution path).
+    # Soft-fails below via the catch block when that detection fails.
     $results = [System.Collections.Generic.List[hashtable]]::new()
     try {
         if (-not (Get-Module -ListAvailable -Name Locksmith)) { return $results }

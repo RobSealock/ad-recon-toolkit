@@ -300,7 +300,9 @@ function _AUD_GetSetting {
     param([hashtable]$Policy, [string]$GuidKey)
     $guid = $script:_AUD_Guids[$GuidKey]
     if (-not $guid) { return 'Unknown' }
-    return $Policy[$guid.ToUpper()] ?? 'No Auditing'
+    $val = $Policy[$guid.ToUpper()]
+    if ($null -eq $val) { return 'No Auditing' }
+    return $val
 }
 
 # =============================================================================
@@ -329,7 +331,9 @@ function _AUD_EvaluateFindings {
         param([hashtable]$DcData)
         if (-not $DcData.edrProducts -or $DcData.edrProducts.Count -eq 0) { return $null }
         $names = $DcData.edrProducts | ForEach-Object {
-            ($script:_AUD_ProcessEDRServices | Where-Object { $_.Name -eq $_ } | Select-Object -First 1).Product ?? $_
+            $edrName = $_
+            $match = $script:_AUD_ProcessEDRServices | Where-Object { $_.Name -eq $edrName } | Select-Object -First 1
+            if ($null -ne $match) { $match.Product } else { $edrName }
         }
         return "EDR present ($($names -join ', ')) may provide equivalent process telemetry"
     }

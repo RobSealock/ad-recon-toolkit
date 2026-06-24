@@ -66,7 +66,9 @@ if (Test-Path $settingsLocalPath) {
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 if (-not $SkipBootstrap) {
     Write-Host '[Bootstrap] Verifying prerequisites...'
-    & (Join-Path $RepoRoot 'bootstrap\Install-Prereqs.ps1') -RepoRoot $RepoRoot -SkipRSAT:($settings['InstallRSATFeatures'] -eq $false)
+    & (Join-Path $RepoRoot 'bootstrap\Install-Prereqs.ps1') -RepoRoot $RepoRoot `
+        -SkipRSAT:($settings['InstallRSATFeatures'] -eq $false) `
+        -SkipPortablePython:($settings['InstallPortablePython'] -eq $false)
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
         Write-Warning '[Bootstrap] Prerequisites check reported errors. Review output above.'
     }

@@ -111,7 +111,25 @@ function _GPO_ScanSysvolGPP {
 function _GPO_ParseGPOReport {
     param([string]$GpoGuid, [string]$DomainFQDN)
 
-    $result = @{ parsed = $false; settings = @{} }
+    # Default every key the caller reads, so a setting this GPO doesn't configure
+    # -- or a report that fails to parse at all (early return, or an exception
+    # below, e.g. no AD Web Services reachable) -- is $false/empty rather than
+    # entirely absent (StrictMode throws on dot-access to a missing hashtable
+    # key, not just $null). Set unconditionally, before any return path.
+    $result = @{
+        parsed   = $false
+        settings = @{
+            wdigestDisabledByGPO    = $false
+            llmnrDisabledByGPO      = $false
+            smb1DisabledByGPO       = $false
+            lsaPPLByGPO             = $false
+            screensaverLockByGPO    = $false
+            screensaverTimeoutSec   = -1
+            advancedAuditConfigured = $false
+            auditPolicies           = @()
+            spoolerStartupTypeByGPO = ''
+        }
+    }
     try {
         if (-not (Get-Command Get-GPOReport -ErrorAction SilentlyContinue)) { return $result }
 
@@ -547,7 +565,7 @@ function _GPO_Collect {
         }
 
         # GPO-015: Orphaned GPOs
-        $orphanedGPOs = _GPO_FindOrphanedGPOs -AllGpos $gpos -DomainDn $domainDn
+        $orphanedGPOs = @(_GPO_FindOrphanedGPOs -AllGpos $gpos -DomainDn $domainDn)
         if ($orphanedGPOs.Count -gt 0) {
             $names = ($orphanedGPOs | Select-Object -First 8 | ForEach-Object { $_.displayName }) -join ', '
             $findings.Add((New-Finding -Id 'GPO-015' -Severity 'Low' `

@@ -71,6 +71,7 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 | `EnableHardeningKitty` | `$false` | Run HardeningKitty CIS/DISA benchmark in audit mode; produces BestPractice-Baseline findings (BP-001–004) |
 | `EnableCertipy` | `$false` | Run Certipy AD CS scanner (requires Python + `pip install certipy-ad`); findings supplement Locksmith in CA-Config |
 | `InstallRSATFeatures` | `$true` | Install RSAT (DnsServer/DhcpServer/GroupPolicy modules) during bootstrap. Set `$false` to skip — see note below |
+| `InstallPortablePython` | `$true` | Fallback only: download a portable Python to `tools\python\` (no installer, no registry changes) if no real Python/pip is on PATH, so pip-based tools install automatically. Has no effect if a real system Python is already present |
 
 `EnableCertipy` also requires `CertipyUsername` and `CertipyPassword` in `settings.local.psd1` (or a valid Kerberos ticket on a Linux/macOS run host). See the [Certipy section](#optional-certipy-ad-cs--esc1esc16) below.
 
@@ -132,7 +133,7 @@ Certipy is an optional Python-based AD CS enumerator. When enabled it runs along
 
 **Prerequisites**
 
-- Python 3.8+ with pip installed on the run host
+- Python 3.8+ with pip (see below — installed automatically if missing)
 - Domain credentials with read access to AD CS (standard user is sufficient for enumeration)
 
 **Install**
@@ -143,6 +144,10 @@ Certipy is an optional Python-based AD CS enumerator. When enabled it runs along
 pip install certipy-ad
 # Then copy certipy.exe from your Python Scripts directory to tools\bin\
 ```
+
+If no real Python is on PATH, `Install-Prereqs.ps1` downloads a portable copy
+automatically (see `InstallPortablePython` below) rather than failing — no
+need to install Python yourself first.
 
 **Configure credentials**
 

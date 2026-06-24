@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Reassembles PurpleKnight.exe from its split parts.
 

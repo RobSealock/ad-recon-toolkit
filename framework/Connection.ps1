@@ -53,13 +53,19 @@ function New-AdsiEntry {
     if (-not $script:_Conn) { return [adsi]$Path }
 
     $remotePath = $Path -replace '^LDAP://', "LDAP://$($script:_Conn.Server)/"
+    # ServerBind tells ADSI the target is an explicit server (IP or hostname),
+    # not a domain name -- without it, binding can hang or behave inconsistently
+    # trying to canonicalize/locate a DC via Kerberos/DNS for a non-domain-joined
+    # client (observed: reliable under .NET Core/pwsh, but hangs or silently
+    # returns null attributes under .NET Framework/Windows PowerShell 5.1).
+    $authTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
+                 [System.DirectoryServices.AuthenticationTypes]::ServerBind
     if ($script:_Conn.Credential) {
         $cred = $script:_Conn.Credential
         return New-Object System.DirectoryServices.DirectoryEntry(
-            $remotePath, $cred.UserName, $cred.GetNetworkCredential().Password,
-            [System.DirectoryServices.AuthenticationTypes]::Secure)
+            $remotePath, $cred.UserName, $cred.GetNetworkCredential().Password, $authTypes)
     }
-    return New-Object System.DirectoryServices.DirectoryEntry($remotePath)
+    return New-Object System.DirectoryServices.DirectoryEntry($remotePath, $null, $null, $authTypes)
 }
 
 # PSCredential for the configured target, or $null in default (domain-joined) mode.

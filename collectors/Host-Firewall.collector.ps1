@@ -89,7 +89,7 @@ function _FW_PortsFromRule {
             }
         }
     }
-    return ,$ports
+    return $ports
 }
 
 # ── Main collector ────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function _HostFirewall_Collect {
         }
 
         # ── Inbound allow rules ───────────────────────────────────────────────
-        $inboundRules = _FW_GetInboundRules
+        $inboundRules = @(_FW_GetInboundRules)
         $ruleFindings = [System.Collections.Generic.List[object]]::new()
         $ruleData     = [System.Collections.Generic.List[hashtable]]::new()
         $gpoRuleCount = 0
@@ -177,7 +177,7 @@ function _HostFirewall_Collect {
                 $localRuleCount++
             }
 
-            $ports    = _FW_PortsFromRule -LocalPorts $rule.LocalPorts
+            $ports    = @(_FW_PortsFromRule -LocalPorts $rule.LocalPorts)
             $anySource= _FW_IsAnySource -RemoteAddress $rule.RemoteAddress
 
             foreach ($port in $ports) {

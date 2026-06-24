@@ -145,14 +145,14 @@ if ($summaryRecord) {
 }
 
 $sevOrder = @{ Critical=0; High=1; Medium=2; Low=3; Informational=4 }
-$sorted   = $allFindings | Sort-Object { $sevOrder[$_.severity] ?? 9 }
+$sorted   = $allFindings | Sort-Object { if ($null -ne $sevOrder[$_.severity]) { $sevOrder[$_.severity] } else { 9 } }
 
 Write-Host ''
 Write-Host "  Findings: $($allFindings.Count)"
 
 if ($allFindings.Count -gt 0) {
     Write-Host ''
-    $sorted | Group-Object severity | Sort-Object { $sevOrder[$_.Name] ?? 9 } | ForEach-Object {
+    $sorted | Group-Object severity | Sort-Object { if ($null -ne $sevOrder[$_.Name]) { $sevOrder[$_.Name] } else { 9 } } | ForEach-Object {
         Write-Host "    $($_.Name.ToUpper().PadRight(13)) $($_.Count) finding(s)"
     }
 

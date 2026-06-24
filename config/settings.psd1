@@ -50,6 +50,14 @@
     # entirely (e.g. on a fresh machine where you don't want to wait).
     InstallRSATFeatures = $true
 
+    # Portable Python (fallback only)
+    # If no real Python/pip is on PATH, Install-Prereqs.ps1 downloads the
+    # official Windows embeddable Python package to tools\python\ (no installer,
+    # no registry changes) so pip-based tools (currently Certipy) install
+    # automatically. Inert -- has zero effect -- if a real system Python is
+    # already on PATH. Set to $false to skip and rely on manual Python setup.
+    InstallPortablePython = $true
+
     # Remote / cross-domain assessment
     # Run from a host that is NOT joined to the target domain by pointing
     # directly at a DC and supplying alternate credentials. Leave TargetDC
