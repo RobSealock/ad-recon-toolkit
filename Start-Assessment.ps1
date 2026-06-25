@@ -283,12 +283,15 @@ Write-Host "  Validation : $(Join-Path $RepoRoot "output\validation\$($ctx.RunId
 Write-Host '════════════════════════════════════════════════════════════════'
 Write-Host ''
 
-# ── PurpleKnight reminder ─────────────────────────────────────────────────────
-Write-Host '  REMINDER — PurpleKnight (manual step required)'
-Write-Host '  Run PurpleKnight against this domain and save the CSV/HTML'
-Write-Host "  export to:  $(Join-Path $RepoRoot 'output\purpleknight\')"
-Write-Host '  The PurpleKnight collector will pick it up on the next full run.'
-Write-Host ''
+# ── PurpleKnight reminder — suppressed when PK already collected this run ─────
+$pkCollected = Test-Path (Join-Path $paths.RunRoot 'PurpleKnight.indicator-summary.json')
+if (-not $pkCollected) {
+    Write-Host '  REMINDER — PurpleKnight (manual step required)'
+    Write-Host '  Run PurpleKnight against this domain and save the CSV/HTML'
+    Write-Host "  export to:  $(Join-Path $RepoRoot 'output\purpleknight\')"
+    Write-Host '  The PurpleKnight collector will pick it up on the next full run.'
+    Write-Host ''
+}
 
 # ── SharpHound / BloodHound CE reminder ───────────────────────────────────────
 # SharpHound.exe runs automatically, but the resulting zip is only USED
@@ -304,8 +307,9 @@ if (Test-Path $shRecordFile) {
     $shHasUploadStatus = $shAttrs.PSObject.Properties.Name -contains 'uploadStatus'
     $shUploaded = $shHasUploadStatus -and $shAttrs.uploadStatus -like 'uploaded*'
     if ($shAttrs.zipFile -and $shAttrs.zipFile -ne 'not produced' -and -not $shUploaded) {
+        $shZipFull = Join-Path $paths.RunRoot "artifacts\$($shAttrs.zipFile)"
         Write-Host '  REMINDER — SharpHound / BloodHound CE (manual step required)'
-        Write-Host "  Zip collected but not auto-uploaded: $($shAttrs.zipFile)"
+        Write-Host "  Zip : $shZipFull"
         Write-Host "  Import it into BloodHound CE manually, or set BloodHoundApiUrl"
         Write-Host '  and BloodHoundApiKey in settings.local.psd1 to automate this.'
         Write-Host ''

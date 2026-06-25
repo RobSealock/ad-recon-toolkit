@@ -32,7 +32,7 @@
     TargetsFile         = ''
 
     # PurpleKnight export path
-    # Leave empty to auto-scan output\purpleknight\ for the latest *.csv file.
+    # Leave empty to auto-scan output\purpleknight\ for the latest *.csv or *.html file.
     # Set an explicit path only if the export lives outside that directory.
     # >>> Save all PurpleKnight CSV/HTML exports to: <RepoRoot>\output\purpleknight\ <<<
     PurpleKnightExport  = ''

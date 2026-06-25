@@ -15,7 +15,8 @@ function _PurpleKnight_Collect {
     $exportPath = $Settings['PurpleKnightExport']
 
     if (-not $exportPath) {
-        $latest = Get-ChildItem -Path $pkExportDir -Filter '*.csv' -ErrorAction SilentlyContinue |
+        $latest = Get-ChildItem -Path $pkExportDir -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Extension -in @('.csv', '.html') } |
                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($latest) {
             $exportPath = $latest.FullName
@@ -35,7 +36,7 @@ function _PurpleKnight_Collect {
             -Attributes @{
                 status     = 'no-export'
                 exportDir  = $pkExportDir
-                instruction= 'Run PurpleKnight manually on a DC, export CSV, save to output\purpleknight\'
+                instruction= 'Run PurpleKnight manually on a DC, export CSV (preferred) or HTML, save to output\purpleknight\'
             } `
             -RunId $runId))
         return $records
