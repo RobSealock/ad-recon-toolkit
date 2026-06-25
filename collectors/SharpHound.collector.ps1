@@ -79,8 +79,10 @@ function _SharpHound_Collect {
         $zipFile = $null
 
         # CollectAll for CtF; production may subset (e.g., --CollectionMethods Default)
-        & $binPath --CollectionMethods All --Domain $RunContext.Domain --OutputDirectory $artDir `
-            --ZipFilename "sharphound-$runId.zip" --NoSaveCache 2>&1 | Out-Null
+        $shOutput = & $binPath --CollectionMethods All --Domain $RunContext.Domain --OutputDirectory $artDir `
+            --ZipFilename "sharphound-$runId.zip" --NoSaveCache 2>&1
+        $shOutput | ForEach-Object { Write-Host "         [SharpHound] $_" }
+        $shOutput | Out-File (Join-Path $artDir "sharphound-$runId.log") -Encoding UTF8
 
         $zipFile = Get-ChildItem -Path $artDir -Filter 'sharphound-*.zip' | Select-Object -First 1
 
