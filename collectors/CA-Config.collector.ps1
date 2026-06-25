@@ -465,7 +465,13 @@ function _CA_RunLocksmith {
     try {
         if (-not (Get-Module -ListAvailable -Name Locksmith)) { return $results }
         Write-Host "         [CA-Config] Running Locksmith..."
-        $findings = Invoke-Locksmith -Mode 1 -ErrorAction Stop  # Mode 1 = report only
+        # Locksmith uses a bare 'break' (not 'return') to signal "no findings found".
+        # Without this guard that break propagates to the orchestrator's collector
+        # foreach and silently kills all remaining collectors.
+        $findings = $null
+        foreach ($_ in @($null)) {
+            $findings = Invoke-Locksmith -Mode 1 -ErrorAction Stop  # Mode 1 = report only
+        }
 
         # Extract ESC IDs from Technique/Name fields for provenance tracking.
         # Locksmith encodes them as e.g. "ESC1", "ESC3" in the Technique or Name fields.

@@ -79,10 +79,14 @@ foreach ($c in $collectors) {
         continue
     }
 
-    Write-Host "  [NEXT] $($c.Name)"
     Write-Host "  [RUN ] $($c.Name)"
     try {
-        $records = @(& $c.Invoke -RunContext $RunContext -Settings $Settings -RunRoot $paths.RunRoot)
+        # Inner foreach absorbs any bare 'break' fired by third-party modules
+        # (Locksmith uses break to signal "no findings" — without this guard it
+        # would propagate here and silently kill all remaining collectors).
+        $records = @(foreach ($_ in @($null)) {
+            & $c.Invoke -RunContext $RunContext -Settings $Settings -RunRoot $paths.RunRoot
+        })
         $count   = 0
         foreach ($r in $records) {
             if ($null -ne $r) {
@@ -94,9 +98,11 @@ foreach ($c in $collectors) {
         $statusLog.Add(@{ collector = $c.Name; status = 'completed'; records = $count })
     } catch {
         Write-Warning "  [FAIL] $($c.Name): $_"
-        $err = New-CollectionError -Collector $c.Name -Target $RunContext.RunHost `
-            -ErrorMessage $_.ToString() -RunId $RunContext.RunId
-        Save-ReconRecord -Record $err -RunRoot $paths.RunRoot
+        try {
+            $err = New-CollectionError -Collector $c.Name -Target $RunContext.RunHost `
+                -ErrorMessage $_.ToString() -RunId $RunContext.RunId
+            Save-ReconRecord -Record $err -RunRoot $paths.RunRoot
+        } catch { Write-Warning "  [FAIL-CATCH] $($c.Name): $_" }
         $statusLog.Add(@{ collector = $c.Name; status = 'failed'; error = $_.ToString() })
     }
 }
