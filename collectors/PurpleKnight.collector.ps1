@@ -63,14 +63,20 @@ function _PurpleKnight_Collect {
             $rows = Import-Csv $exportPath
             $indicatorCount = $rows.Count
             foreach ($row in $rows) {
-                if ($row.Severity -match 'Critical|High') {
-                    $pkFindings.Add((New-Finding `
-                        -Id          "PK-$($row.ControlId)" `
-                        -Severity    $(if ($row.Severity -eq 'Critical') { 'Critical' } else { 'High' }) `
-                        -Technique   $row.MitreTechnique `
-                        -Description $row.Description `
-                        -Reference   'https://purple-knight.com/'))
-                }
+                # Use PSObject.Properties to guard against StrictMode PropertyNotFound
+                # errors when the CSV uses different column names across PK versions.
+                $props = $row.PSObject.Properties
+                $sev   = if ($props['Severity'])      { [string]$row.Severity }      else { '' }
+                if ($sev -notmatch 'Critical|High') { continue }
+                $cid   = if ($props['ControlId'])     { [string]$row.ControlId }     else { [string]($pkFindings.Count + 1) }
+                $tech  = if ($props['MitreTechnique']){ [string]$row.MitreTechnique } else { '' }
+                $desc  = if ($props['Description'])   { [string]$row.Description }   else { $sev }
+                $pkFindings.Add((New-Finding `
+                    -Id          "PK-$cid" `
+                    -Severity    $(if ($sev -eq 'Critical') { 'Critical' } else { 'High' }) `
+                    -Technique   $tech `
+                    -Description $desc `
+                    -Reference   'https://purple-knight.com/'))
             }
         } else {
             $indicatorCount = 'unknown (HTML — CSV export recommended for structured ingestion)'

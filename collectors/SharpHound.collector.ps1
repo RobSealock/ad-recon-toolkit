@@ -80,7 +80,7 @@ function _SharpHound_Collect {
 
         # CollectAll for CtF; production may subset (e.g., --CollectionMethods Default)
         $shOutput = & $binPath --CollectionMethods All --Domain $RunContext.Domain --OutputDirectory $artDir `
-            --ZipFilename "sharphound-$runId.zip" --NoSaveCache 2>&1
+            --ZipFilename "sharphound-$runId.zip" 2>&1
         $shOutput | ForEach-Object { Write-Host "         [SharpHound] $_" }
         $shOutput | Out-File (Join-Path $artDir "sharphound-$runId.log") -Encoding UTF8
 

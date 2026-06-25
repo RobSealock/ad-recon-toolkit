@@ -283,8 +283,11 @@ Write-Host "  Validation : $(Join-Path $RepoRoot "output\validation\$($ctx.RunId
 Write-Host '════════════════════════════════════════════════════════════════'
 Write-Host ''
 
-# ── PurpleKnight reminder — suppressed when PK already collected this run ─────
-$pkCollected = Test-Path (Join-Path $paths.RunRoot 'PurpleKnight.indicator-summary.json')
+# ── PurpleKnight reminder — suppressed when PK already ran this run ──────────
+# Check for any PurpleKnight JSON (indicator-summary OR collection-error) so
+# a CSV parse failure doesn't re-trigger the "please run PurpleKnight" prompt.
+$pkCollected = (Get-ChildItem -Path $paths.RunRoot -Filter 'PurpleKnight.*.json' `
+    -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
 if (-not $pkCollected) {
     Write-Host '  REMINDER — PurpleKnight (manual step required)'
     Write-Host '  Run PurpleKnight against this domain and save the CSV/HTML'
