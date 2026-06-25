@@ -66,7 +66,10 @@ foreach ($c in $collectors) {
         }
     }
 
-    if (-not (Test-CollectorEligible -Collector $c -HeldPrivileges $RunContext.HeldPrivileges)) {
+    $eligible = $false
+    try { $eligible = Test-CollectorEligible -Collector $c -HeldPrivileges $RunContext.HeldPrivileges }
+    catch { Write-Warning "  [ELIG-ERR] $($c.Name): $_" }
+    if (-not $eligible) {
         Write-Host "  [SKIP] $($c.Name)  — requires $($c.MinPrivilege)"
         $statusLog.Add(@{
             collector = $c.Name
@@ -76,6 +79,7 @@ foreach ($c in $collectors) {
         continue
     }
 
+    Write-Host "  [NEXT] $($c.Name)"
     Write-Host "  [RUN ] $($c.Name)"
     try {
         $records = @(& $c.Invoke -RunContext $RunContext -Settings $Settings -RunRoot $paths.RunRoot)
