@@ -838,15 +838,27 @@ function _HostOS_Collect {
 
     $records   = [System.Collections.Generic.List[object]]::new()
     $runId     = $RunContext.RunId
-    $rootDse   = (New-AdsiEntry 'LDAP://RootDSE')
-    $domainDn  = $rootDse.defaultNamingContext.ToString()
-    $configDn  = $rootDse.configurationNamingContext.ToString()
-    $targetsFile = if ($Settings['TargetsFile']) { Join-Path $RunContext.RepoRoot $Settings['TargetsFile'] } else { '' }
 
-    # Discover targets
-    Write-Verbose '[Host-OS] Discovering targets...'
-    $targets = _HostOS_DiscoverTargets -DomainDn $domainDn -ConfigDn $configDn -TargetsFile $targetsFile
-    Write-Host "         $($targets.Count) target(s) discovered for Host-OS scan"
+    # Host-assessment mode: use caller-supplied targets (no AD LDAP discovery needed).
+    # Standard AD assessment mode: discover DCs, CA hosts, and DHCP servers via LDAP.
+    $overrideProp = $RunContext.PSObject.Properties['OverrideTargets']
+    if ($overrideProp -and $overrideProp.Value) {
+        $targets = @($overrideProp.Value)
+    } else {
+        $targetsFile = if ($Settings['TargetsFile']) { Join-Path $RunContext.RepoRoot $Settings['TargetsFile'] } else { '' }
+        try {
+            $rootDse  = (New-AdsiEntry 'LDAP://RootDSE')
+            $domainDn = $rootDse.defaultNamingContext.ToString()
+            $configDn = $rootDse.configurationNamingContext.ToString()
+        } catch {
+            $records.Add((New-CollectionError -Collector 'Host-OS' `
+                -Target 'LDAP://RootDSE' -ErrorMessage "AD discovery failed: $_" -RunId $runId))
+            return $records
+        }
+        Write-Verbose '[Host-OS] Discovering targets via AD...'
+        $targets = _HostOS_DiscoverTargets -DomainDn $domainDn -ConfigDn $configDn -TargetsFile $targetsFile
+    }
+    Write-Host "         $($targets.Count) target(s) for Host-OS scan"
 
     foreach ($target in $targets) {
         $fqdn  = $target.FQDN
