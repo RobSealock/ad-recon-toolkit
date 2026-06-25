@@ -197,6 +197,47 @@ Set `EnableCertipy = $true` in `config\settings.psd1` (applies to all runs) or i
 
 ---
 
+## Optional: BloodHound CE (attack-path graphing)
+
+BloodHound CE is the viewer for the zip file produced by the SharpHound collector. It visualises attack paths through ACLs, sessions, and group memberships — the same data the toolkit collects, but as an interactive graph rather than a flat finding list.
+
+SharpHound runs automatically when `EnableSharpHound = $true` (the default). BloodHound CE is **not** required for the risk register or validation cards; it is a separate viewer you install on your analysis machine, not the run host.
+
+**Prerequisites**
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/Mac/Linux) — BloodHound CE runs as a Docker Compose stack
+
+**Install**
+
+```powershell
+# 1. Download the Docker Compose file
+curl -L https://ghcr.io/specterops/bloodhound/main/examples/docker-compose/docker-compose.yml -o bloodhound-docker-compose.yml
+
+# 2. Start BloodHound CE (first run pulls images — may take a few minutes)
+docker compose -f bloodhound-docker-compose.yml up -d
+
+# 3. Get the randomly-generated admin password from startup logs
+docker compose -f bloodhound-docker-compose.yml logs | findstr "Initial Password"
+```
+
+Then open **http://localhost:8080** in a browser, log in as `admin` with the password from step 3, and change the password when prompted.
+
+**Import the SharpHound zip**
+
+After each assessment run, find the zip in the run artifacts:
+
+```
+output\runs\<RunId>\artifacts\sharphound-<RunId>.zip
+```
+
+In BloodHound CE: **Administration → File Ingest → Upload Files** — select the zip and wait for ingestion to complete (status shown in the same screen). Attack paths appear immediately in the Explore view once ingestion finishes.
+
+**Compatibility note**
+
+The SharpHound binary in this toolkit (v2.x) produces BloodHound CE format. It is **not** compatible with legacy BloodHound (v4.x desktop app). If you need the legacy app, download SharpHound v1.x from https://github.com/BloodHoundAD/BloodHound/releases separately — this toolkit does not ship or manage it.
+
+---
+
 ## Findings catalog
 
 All findings are passive reads — no configuration is changed. Each finding maps to a MITRE ATT&CK technique and references the enabling condition, not the attack itself.
