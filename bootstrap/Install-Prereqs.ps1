@@ -249,9 +249,9 @@ if ($pipPackages.Count -gt 0) {
             try {
                 $pipCmd = $pip.Split(' ')
                 if ($pipCmd.Count -gt 1) {
-                    & $pipCmd[0] $pipCmd[1..($pipCmd.Count-1)] install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet 2>&1
+                    & $pipCmd[0] $pipCmd[1..($pipCmd.Count-1)] install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet --no-warn-script-location 2>&1
                 } else {
-                    & $pip install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet 2>&1
+                    & $pip install "$($pkg.PipName)>=$($pkg.MinVersion)" --quiet --no-warn-script-location 2>&1
                 }
 
                 # Locate the installed exe in Python's Scripts directories
