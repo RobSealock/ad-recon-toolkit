@@ -84,7 +84,10 @@ function _SharpHound_Collect {
         $shOutput | ForEach-Object { Write-Host "         [SharpHound] $_" }
         $shOutput | Out-File (Join-Path $artDir "sharphound-$runId.log") -Encoding UTF8
 
-        $zipFile = Get-ChildItem -Path $artDir -Filter 'sharphound-*.zip' | Select-Object -First 1
+        # Scan for any zip — SharpHound v2 may timestamp the filename even when
+        # --ZipFilename is specified, so match broadly and take the newest.
+        $zipFile = Get-ChildItem -Path $artDir -Filter '*.zip' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
         $attrs = @{
             domain         = $RunContext.Domain
