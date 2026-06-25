@@ -47,10 +47,15 @@ $script:_HostRoles_RiskyFeatures = @(
 # =============================================================================
 
 $script:_HostRoles_Script = {
+    Set-StrictMode -Off
     $r = @{ sections = @{}; errors = [System.Collections.Generic.List[string]]::new() }
 
     try {
-        if (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue) {
+        # Use Win32_OperatingSystem.ProductType for authoritative server detection:
+        # 1 = Workstation, 2 = Domain Controller, 3 = Server
+        # Do NOT rely on Get-WindowsFeature availability — RSAT installs it on client OSes too.
+        $osProductType = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).ProductType
+        if ($osProductType -ne 1) {
             $installed = @(Get-WindowsFeature -ErrorAction Stop |
                 Where-Object { $_.InstallState -in @('Installed','InstallPending') })
             $r.sections.isServerOS       = $true
@@ -85,9 +90,17 @@ function _HostRoles_EvaluateFindings {
 
     $installedNames = [System.Collections.Generic.HashSet[string]]([System.StringComparer]::OrdinalIgnoreCase)
 
-    $roleList    = if ($s.PSObject.Properties['installedRoles'])    { $s.installedRoles    } else { @() }
-    $featureList = if ($s.PSObject.Properties['installedFeatures']) { $s.installedFeatures } else { @() }
-    $isServer    = if ($s.PSObject.Properties['isServerOS'])        { $s.isServerOS        } else { $false }
+    # ContainsKey works for both local hashtables and deserialized PSObjects; PSObject.Properties
+    # only reflects the type's real members, not hashtable entries, so it cannot be used here.
+    $roleList    = if ($s -is [hashtable] -and $s.ContainsKey('installedRoles'))    { $s['installedRoles']    }
+                   elseif ($s -isnot [hashtable]) { try { $s.installedRoles    } catch { @() } }
+                   else { @() }
+    $featureList = if ($s -is [hashtable] -and $s.ContainsKey('installedFeatures')) { $s['installedFeatures'] }
+                   elseif ($s -isnot [hashtable]) { try { $s.installedFeatures } catch { @() } }
+                   else { @() }
+    $isServer    = if ($s -is [hashtable] -and $s.ContainsKey('isServerOS'))        { [bool]$s['isServerOS'] }
+                   elseif ($s -isnot [hashtable]) { try { [bool]$s.isServerOS   } catch { $false } }
+                   else { $false }
 
     foreach ($item in @($roleList) + @($featureList)) {
         $n = if ($item -is [hashtable]) { $item['name'] } else { $item.name }
@@ -158,7 +171,7 @@ function _HostRoles_Collect {
         }
 
         if ($raw.errors -and $raw.errors.Count -gt 0) {
-            Write-Warning "  [Host-Roles] $fqdn — $($raw.errors -join '; ')"
+            Write-Warning "  [Host-Roles] $fqdn - $($raw.errors -join '; ')"
         }
 
         $findings = _HostRoles_EvaluateFindings -Raw $raw -Target $target `
@@ -174,11 +187,11 @@ function _HostRoles_Collect {
             -CollectedAtPriv $true `
             -Attributes     @{
                 fqdn             = $fqdn
-                isServerOS       = $raw.sections.isServerOS
-                installedRoles   = $raw.sections.installedRoles
-                installedFeatures= $raw.sections.installedFeatures
-                roleCount        = if ($raw.sections.installedRoles)    { $raw.sections.installedRoles.Count    } else { 0 }
-                featureCount     = if ($raw.sections.installedFeatures) { $raw.sections.installedFeatures.Count } else { 0 }
+                isServerOS       = if ($raw.sections -is [hashtable]) { [bool]$raw.sections['isServerOS'] } else { try { [bool]$raw.sections.isServerOS } catch { $false } }
+                installedRoles   = if ($raw.sections -is [hashtable]) { $raw.sections['installedRoles']    } else { try { $raw.sections.installedRoles    } catch { @() } }
+                installedFeatures= if ($raw.sections -is [hashtable]) { $raw.sections['installedFeatures'] } else { try { $raw.sections.installedFeatures } catch { @() } }
+                roleCount        = if ($raw.sections -is [hashtable] -and $raw.sections['installedRoles'])    { $raw.sections['installedRoles'].Count    } else { 0 }
+                featureCount     = if ($raw.sections -is [hashtable] -and $raw.sections['installedFeatures']) { $raw.sections['installedFeatures'].Count } else { 0 }
             } `
             -Findings  $findings.ToArray() `
             -RunId     $runId))

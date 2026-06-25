@@ -158,6 +158,10 @@ function _HostOS_DiscoverTargets {
 # =============================================================================
 
 $script:_HostOS_Script = {
+    # Suspend StrictMode for the scriptblock — (Get-ItemProperty ...).ValueName returns $null when
+    # a registry value is absent, and StrictMode would throw PropertyNotFound on $null.PropertyName.
+    # The parent scope retains whatever StrictMode was set before invoking this scriptblock.
+    Set-StrictMode -Off
     $r = @{ sections = @{}; errors = [System.Collections.Generic.List[string]]::new() }
 
     # OS and patch state
@@ -653,7 +657,7 @@ function _HostOS_EvaluateFindings {
     }
 
     $sf = $s.securityFlags
-    if ($sf) {
+    if ($sf -and $sf.Count -gt 0) {
         # HOST-017 DSRM admin logon behavior (DC-specific)
         # Value 2 allows the DSRM local Administrator to authenticate over the network —
         # a stealthy DC backdoor that survives domain credential resets.

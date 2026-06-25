@@ -1,4 +1,4 @@
-# Host-Persistence collector — LOL and persistence location audit.
+# Host-Persistence collector -LOL and persistence location audit.
 # MinPrivilege: LocalAdmin
 # Requires RunContext.OverrideTargets (set by Start-HostAssessment.ps1).
 #
@@ -15,14 +15,14 @@
 #   PERSIST-001  Run/RunOnce registry entry (Medium) or in suspicious location (High)
 #   PERSIST-002  Startup folder item (Medium) or in suspicious location (High)
 #   PERSIST-003  Non-Microsoft scheduled task with suspicious action or SYSTEM+Highest privilege
-#   PERSIST-004  WMI event subscription (any non-default — High)
+#   PERSIST-004  WMI event subscription (any non-default -High)
 #   PERSIST-005  AppInit_DLLs populated (Critical)
 #   PERSIST-006  Non-default LSA Security or Notification package (Critical/High)
 #   PERSIST-007  Running service with binary in temp/appdata/downloads or using LOL binary (High)
 
 # =============================================================================
 # REMOTE-SAFE COLLECTION SCRIPTBLOCK
-# Self-contained — no external function dependencies.
+# Self-contained -no external function dependencies.
 # =============================================================================
 
 $script:_HostPersist_Script = {
@@ -55,7 +55,7 @@ $script:_HostPersist_Script = {
         $r.sections.runKeys = $runEntries.ToArray()
     } catch { $r.errors.Add("runKeys: $_"); $r.sections.runKeys = @() }
 
-    # Startup folders — All Users + per-user profiles
+    # Startup folders -All Users + per-user profiles
     try {
         $startupItems = [System.Collections.Generic.List[hashtable]]::new()
         $folders = [System.Collections.Generic.List[string]]::new()
@@ -81,7 +81,7 @@ $script:_HostPersist_Script = {
         $r.sections.startupItems = $startupItems.ToArray()
     } catch { $r.errors.Add("startupItems: $_"); $r.sections.startupItems = @() }
 
-    # Scheduled tasks — non-Microsoft namespace
+    # Scheduled tasks -non-Microsoft namespace
     try {
         $tasks = [System.Collections.Generic.List[hashtable]]::new()
         Get-ScheduledTask -ErrorAction SilentlyContinue |
@@ -227,8 +227,8 @@ function _HostPersist_EvaluateFindings {
         $cls = _HostPersist_ClassifyCmd -Cmd $cmd -SuspPaths $suspPaths -LolBins $lolBins
         $sev = if ($cls -ne 'clean') { 'High' } else { 'Medium' }
         $note = switch ($cls) {
-            'suspicious-path' { ' — path is in a suspicious/writable location' }
-            'lolbin'          { ' — uses a LOL binary outside System32/SysWOW64' }
+            'suspicious-path' { ' -path is in a suspicious/writable location' }
+            'lolbin'          { ' -uses a LOL binary outside System32/SysWOW64' }
             default           { '' }
         }
         $name    = if ($entry -is [hashtable]) { $entry['name']    } else { $entry.name    }
@@ -236,7 +236,7 @@ function _HostPersist_EvaluateFindings {
         $type    = if ($entry -is [hashtable]) { $entry['type']    } else { $entry.type    }
         $findings.Add((New-Finding -Id 'PERSIST-001' -Severity $sev `
             -Technique 'T1547.001' `
-            -Description "Registry $type entry '$name' on $h ($hive$note): '$cmd'. Registry run keys execute at logon/boot — verify this entry is expected and the binary has not been replaced." `
+            -Description "Registry $type entry '$name' on $h ($hive$note): '$cmd'. Registry run keys execute at logon/boot -verify this entry is expected and the binary has not been replaced." `
             -Reference 'https://attack.mitre.org/techniques/T1547/001/'))
     }
 
@@ -250,11 +250,11 @@ function _HostPersist_EvaluateFindings {
         $sev = if ($cls -ne 'clean') { 'High' } else { 'Medium' }
         $findings.Add((New-Finding -Id 'PERSIST-002' -Severity $sev `
             -Technique 'T1547.001' `
-            -Description "Startup folder item '$nm' on $h at '$fp' (modified: $mod, folder: $fld). Startup items run at user logon — verify this is an expected application." `
+            -Description "Startup folder item '$nm' on $h at '$fp' (modified: $mod, folder: $fld). Startup items run at user logon -verify this is an expected application." `
             -Reference 'https://attack.mitre.org/techniques/T1547/001/'))
     }
 
-    # PERSIST-003 Scheduled tasks — only flag suspicious action or SYSTEM+Highest
+    # PERSIST-003 Scheduled tasks -only flag suspicious action or SYSTEM+Highest
     foreach ($task in $s.scheduledTasks) {
         $exe  = if ($task -is [hashtable]) { $task['execute']   } else { $task.execute   }
         $args = if ($task -is [hashtable]) { $task['arguments'] } else { $task.arguments }
@@ -276,7 +276,7 @@ function _HostPersist_EvaluateFindings {
             if ($isHighest)                 { $note += 'runs at highest privilege' }
             $findings.Add((New-Finding -Id 'PERSIST-003' -Severity $sev `
                 -Technique 'T1053.005' `
-                -Description "Scheduled task '$name' ($path) on $h — $($note -join ', '). Action: '$exe$(if ($args) { " $args" })'. RunAs: $ra. Verify the task and binary are legitimate." `
+                -Description "Scheduled task '$name' ($path) on $h -$($note -join ', '). Action: '$exe$(if ($args) { " $args" })'. RunAs: $ra. Verify the task and binary are legitimate." `
                 -Reference 'https://attack.mitre.org/techniques/T1053/005/'))
         }
     }
@@ -297,7 +297,7 @@ function _HostPersist_EvaluateFindings {
         $val = if ($entry -is [hashtable]) { $entry['value']   } else { $entry.value   }
         $findings.Add((New-Finding -Id 'PERSIST-005' -Severity 'Critical' `
             -Technique 'T1546.010' `
-            -Description "AppInit_DLLs is populated on $h at '$kp': '$val'. Every DLL listed here is injected into all processes that load user32.dll — a code injection mechanism used by rootkits and credential-theft implants (e.g., mimilib). This key should be empty in all standard configurations." `
+            -Description "AppInit_DLLs is populated on $h at '$kp': '$val'. Every DLL listed here is injected into all processes that load user32.dll -a code injection mechanism used by rootkits and credential-theft implants (e.g., mimilib). This key should be empty in all standard configurations." `
             -Reference 'https://attack.mitre.org/techniques/T1546/010/'))
     }
 
@@ -309,13 +309,13 @@ function _HostPersist_EvaluateFindings {
         if ($ndSec -and @($ndSec).Count -gt 0) {
             $findings.Add((New-Finding -Id 'PERSIST-006' -Severity 'Critical' `
                 -Technique 'T1547.005' `
-                -Description "Non-default LSA Security Package(s) on $h: $($ndSec -join ', '). LSA security packages are DLLs loaded into lsass.exe — used by credential-theft implants (e.g., mimilib.dll). Default set: kerberos, msv1_0, schannel, wdigest, tspkg, pku2u. Remove unexpected entries from HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Security Packages." `
+                -Description "Non-default LSA Security Package(s) on ${h}: $($ndSec -join ', '). LSA security packages are DLLs loaded into lsass.exe -used by credential-theft implants (e.g., mimilib.dll). Default set: kerberos, msv1_0, schannel, wdigest, tspkg, pku2u. Remove unexpected entries from HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Security Packages." `
                 -Reference 'https://attack.mitre.org/techniques/T1547/005/'))
         }
         if ($ndNotif -and @($ndNotif).Count -gt 0) {
             $findings.Add((New-Finding -Id 'PERSIST-006' -Severity 'High' `
                 -Technique 'T1547.005' `
-                -Description "Non-default LSA Notification Package(s) on $h: $($ndNotif -join ', '). Notification packages receive plaintext credentials during logon — a credential-harvesting implant vector. Default: scecli. Remove unexpected entries from HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Notification Packages." `
+                -Description "Non-default LSA Notification Package(s) on ${h}: $($ndNotif -join ', '). Notification packages receive plaintext credentials during logon -a credential-harvesting implant vector. Default: scecli. Remove unexpected entries from HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Notification Packages." `
                 -Reference 'https://attack.mitre.org/techniques/T1547/005/'))
         }
     }
@@ -327,7 +327,7 @@ function _HostPersist_EvaluateFindings {
         $acct = if ($svc -is [hashtable]) { $svc['startName']   } else { $svc.startName   }
         $findings.Add((New-Finding -Id 'PERSIST-007' -Severity 'High' `
             -Technique 'T1543.003' `
-            -Description "Service '$name' on $h has a suspicious binary path: '$path' (account: $acct). Services in temp/appdata/downloads or using LOL binaries outside System32 are a persistence and privilege-escalation indicator — verify the service is legitimate and the binary is unmodified." `
+            -Description "Service '$name' on $h has a suspicious binary path: '$path' (account: $acct). Services in temp/appdata/downloads or using LOL binaries outside System32 are a persistence and privilege-escalation indicator -verify the service is legitimate and the binary is unmodified." `
             -Reference 'https://attack.mitre.org/techniques/T1543/003/'))
     }
 
@@ -375,7 +375,7 @@ function _HostPersist_Collect {
         }
 
         if ($raw.errors -and $raw.errors.Count -gt 0) {
-            Write-Warning "  [Host-Persistence] $fqdn — $($raw.errors -join '; ')"
+            Write-Warning "  [Host-Persistence] $fqdn -$($raw.errors -join '; ')"
         }
 
         $findings = _HostPersist_EvaluateFindings -Raw $raw -Target $target
