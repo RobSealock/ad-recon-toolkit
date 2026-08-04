@@ -10,6 +10,7 @@
     EnableLocksmith     = $true
     EnableGroup3r       = $true
     EnablePurpleKnight  = $true
+    EnableForestDruid   = $true
     EnableHardeningKitty= $false   # optional — enable for BestPractice-Baseline collector
     EnableCertipy       = $false   # optional — requires Python + pip install certipy-ad; set CertipyUsername/CertipyPassword in settings.local.psd1 or use Kerberos on domain-joined host
 
@@ -36,6 +37,13 @@
     # Set an explicit path only if the export lives outside that directory.
     # >>> Save all PurpleKnight CSV/HTML exports to: <RepoRoot>\output\purpleknight\ <<<
     PurpleKnightExport  = ''
+
+    # ForestDruid export path
+    # Leave empty to auto-scan output\forestdruid\ for CSV files (Defense
+    # Perimeter and/or Attack Paths exports). Set an explicit path only if the
+    # export lives outside that directory.
+    # >>> Save all Forest Druid CSV exports to: <RepoRoot>\output\forestdruid\ <<<
+    ForestDruidExport   = ''
 
     # Offline mode
     # Set to $true to skip all downloads (binaries and KEV must be pre-staged).

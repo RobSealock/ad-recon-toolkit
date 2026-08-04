@@ -296,6 +296,18 @@ if (-not $pkCollected) {
     Write-Host ''
 }
 
+# ── ForestDruid reminder — suppressed when FD already ran this run ───────────
+$fdCollected = (Get-ChildItem -Path $paths.RunRoot -Filter 'ForestDruid.*.json' `
+    -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+if (-not $fdCollected) {
+    Write-Host '  REMINDER — Forest Druid (manual step required)'
+    Write-Host '  Run Forest Druid, classify security zone objects, export'
+    Write-Host '  Defense Perimeter / Attack Paths CSV, and save to:'
+    Write-Host "              $(Join-Path $RepoRoot 'output\forestdruid\')"
+    Write-Host '  The ForestDruid collector will pick it up on the next full run.'
+    Write-Host ''
+}
+
 # ── SharpHound / BloodHound CE reminder ───────────────────────────────────────
 # SharpHound.exe runs automatically, but the resulting zip is only USED
 # automatically if BloodHoundApiUrl/BloodHoundApiKey are configured and the

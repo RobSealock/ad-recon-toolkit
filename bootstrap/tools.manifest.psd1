@@ -223,6 +223,51 @@
                 '      Do not commit exports to a shared or public repository.'
             )
         }
+
+        @{
+            Name           = 'ForestDruid'
+            Description    = 'Semperis Tier Zero / attack path analysis tool. GUI-only — classify security zone objects interactively, then export CSV (Defense Perimeter / Attack Paths) for ingestion by the ForestDruid collector.'
+            Url            = $null
+            RegistrationUrl= 'https://www.semperis.com/forest-druid/'
+            Version        = '3.6'
+            Sha256         = $null    # operator-verified; not auto-checked
+            TargetPath     = 'tools\bin\FD_Community_3.6\ForestDruid.exe'
+            ZipEntry       = $null
+            Enabled        = $true
+            ToggleKey      = 'EnableForestDruid'
+            Optional       = $true
+            ManualDownload = $true
+            ExportSetting  = 'ForestDruidExport'
+            ExportFormats  = @('csv')
+            Notes          = @(
+                '1. Register and download at: https://www.semperis.com/forest-druid/'
+                '2. Extract to tools\bin\FD_Community_<version>\ (already staged if present).'
+                '3. ForestDruid.exe (201 MB) ships split into parts — run'
+                '   tools\bin\FD_Community_3.6\Restore-ForestDruid.ps1 once to reassemble it.'
+                '4. Run ForestDruid.exe. First launch: accept the license agreement, choose'
+                '   AD (and/or Entra ID), complete the initial scan.'
+                '5. In the app, classify the objects that belong in your Tier Zero security'
+                '   zone (Configure > zones, or accept suggested classifications). This is'
+                '   an analyst judgment step — there is no unattended equivalent.'
+                '6. Click Export in the application header and choose Export Defense'
+                '   Perimeter and/or Export Attack Paths. Each produces a timestamped CSV'
+                '   under Backend\Reports\ in the Forest Druid directory.'
+                '7. Copy the CSV(s) to output\forestdruid\ (auto-ingested by collector).'
+                '8. Re-run Start-Assessment.ps1 — the collector auto-scans output\forestdruid\'
+                '   for CSV files.'
+                '9. To override auto-scan, set ForestDruidExport = <path> in config\settings.psd1.'
+                ''
+                'Unattended data collection: Backend\Collector.exe supports scheduled/'
+                'non-interactive AD+EntraID collection (see tools\bin\FD_Community_3.6\'
+                'Backend\RunCollector.ps1 and Appendix D of the User Guide PDF in that'
+                'folder). It stages data into a local database only — it does not produce'
+                'the CSV export above, so it still requires the manual GUI + Export step'
+                'afterward. Not wired into Install-Prereqs.ps1.'
+                ''
+                'NOTE: output\forestdruid\ is git-ignored (sensitive AD security data).'
+                '      Do not commit exports to a shared or public repository.'
+            )
+        }
     )
 
     # =========================================================================

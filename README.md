@@ -89,6 +89,7 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 | `EnableLocksmith` | `$true` | Run Locksmith AD CS ESC1–ESC16 enumeration; findings feed into CA-Config collector |
 | `EnableGroup3r` | `$true` | Run Group3r GPO sensitive-data scanner; findings feed into GPO-Settings collector (GPO-010) |
 | `EnablePurpleKnight` | `$true` | Run Purple Knight assessment; raw export goes to `output\purpleknight\` (git-ignored) |
+| `EnableForestDruid` | `$true` | Ingest Forest Druid CSV export (Defense Perimeter / Attack Paths); raw export goes to `output\forestdruid\` (git-ignored). See [Optional: Forest Druid](#optional-forest-druid-tier-zero--attack-path-analysis) |
 | `EnableHardeningKitty` | `$false` | Run HardeningKitty CIS/DISA benchmark in audit mode; produces BestPractice-Baseline findings (BP-001–004) |
 | `EnableCertipy` | `$false` | Run Certipy AD CS scanner (requires Python + `pip install certipy-ad`); findings supplement Locksmith in CA-Config |
 | `InstallRSATFeatures` | `$true` | Install RSAT (DnsServer/DhcpServer/GroupPolicy modules) during bootstrap. Set `$false` to skip — see note below |
@@ -237,6 +238,36 @@ In BloodHound CE: **Administration → File Ingest → Upload Files** — select
 **Compatibility note**
 
 The SharpHound binary in this toolkit (v2.x) produces BloodHound CE format. It is **not** compatible with legacy BloodHound (v4.x desktop app). If you need the legacy app, download SharpHound v1.x from https://github.com/BloodHoundAD/BloodHound/releases separately — this toolkit does not ship or manage it.
+
+---
+
+## Optional: Forest Druid (Tier Zero / attack path analysis)
+
+Forest Druid is Semperis's tool for defining and validating your Active Directory Tier Zero security perimeter — it maps attack paths *into* the objects you consider most privileged and helps you decide what actually belongs in that perimeter. Like PurpleKnight, it's GUI-only and analyst-driven: there's no unattended equivalent of the zone-classification step, so this toolkit ingests its CSV export rather than running it.
+
+Bundled at `tools\bin\FD_Community_3.6\` (ships split into parts — see Setup below). `EnableForestDruid = $true` (the default) just controls whether the ingestion collector runs; Forest Druid itself is always launched manually.
+
+**Setup**
+
+```powershell
+# ForestDruid.exe (201 MB) ships split into parts to stay under GitHub's 100 MB
+# limit. Reassemble it once after cloning:
+.\tools\bin\FD_Community_3.6\Restore-ForestDruid.ps1
+```
+
+**Run**
+
+1. Double-click `ForestDruid.exe`. On first run: verify the publisher is Semperis Inc., accept the license agreement, choose AD and/or Entra ID, and let the initial scan complete.
+2. Use the app to classify the objects that belong in your Tier Zero security zone (accept suggested classifications or customize them — this is the analyst judgment step Forest Druid exists for).
+3. Click **Export** in the application header and choose **Export Defense Perimeter** and/or **Export Attack Paths**. Each produces a timestamped CSV under `Backend\Reports\` in the Forest Druid directory.
+4. Copy the CSV(s) to `output\forestdruid\`.
+5. Re-run `Start-Assessment.ps1` — the ForestDruid collector auto-scans `output\forestdruid\` for CSV files and ingests whatever it finds.
+
+**Unattended data collection.** `Backend\Collector.exe` is a real headless CLI (see Appendix D of `Backend\Forest Druid - User Guide.pdf`, or `Backend\RunCollector.ps1`) supporting scheduled/non-interactive collection with explicit credentials and DC targeting — useful from a non-domain-joined host. It is **not** wired into this toolkit's automation: it only stages data into Forest Druid's local database for later review in the GUI, it doesn't produce the CSV export above, so the manual zone-classification + Export step is still required afterward either way.
+
+**Schema note.** Forest Druid's CSV export columns aren't documented anywhere in the User Guide, so the `ForestDruid.collector.ps1` ingestion is currently generic (row count + discovered column names recorded as a raw artifact) rather than mapped into severity-rated findings the way PurpleKnight's CSV is. Once a real export has been seen, the collector should be extended to normalize its actual columns.
+
+NOTE: `output\forestdruid\` is git-ignored (sensitive AD security data). Do not commit exports to a shared or public repository.
 
 ---
 
@@ -503,6 +534,7 @@ Start-Assessment.ps1          ← entry point; loads config, resolves targets, r
 │   ├── SharpHound.collector.ps1        wraps SharpHound binary, produces BloodHound zip
 │   ├── Locksmith2.collector.ps1        wraps Locksmith module, feeds CA-Config
 │   ├── PurpleKnight.collector.ps1      wraps Purple Knight, output to output\purpleknight\
+│   ├── ForestDruid.collector.ps1       ingests Forest Druid CSV, output to output\forestdruid\
 │   └── VulnCheck-Enrich.collector.ps1  optional KEV/CVE enrichment via VulnCheck API
 │
 ├── mappings\
@@ -524,14 +556,15 @@ Start-Assessment.ps1          ← entry point; loads config, resolves targets, r
     ├── runs\<RunId>\          normalized JSON records + run manifest
     ├── reports\               Markdown risk register
     ├── diffs\                 drift reports between runs
-    └── purpleknight\          Purple Knight raw exports (sensitive — git-ignored)
+    ├── purpleknight\          Purple Knight raw exports (sensitive — git-ignored)
+    └── forestdruid\           Forest Druid raw CSV exports (sensitive — git-ignored)
 ```
 
 ### Data flow
 
 1. `Start-Assessment.ps1` loads settings, resolves target DCs and CA hosts, creates a `RunContext`.
 2. Each collector is invoked in order; it writes normalized finding and inventory records to `output\runs\<RunId>\` via `Repository.ps1`.
-3. External tools (PingCastle, SharpHound, Locksmith, Group3r, Purple Knight, Certipy, HardeningKitty) are run as sub-processes where enabled; their raw output is saved as artifacts and normalized findings are emitted into the same run directory.
+3. External tools (PingCastle, SharpHound, Locksmith, Group3r, Purple Knight, Certipy, HardeningKitty) are run as sub-processes where enabled; their raw output is saved as artifacts and normalized findings are emitted into the same run directory. Purple Knight and Forest Druid are GUI-only — their collectors ingest a manually-produced export instead of running the tool.
 4. `New-RiskRegister.ps1` reads the run directory and produces a Markdown risk register sorted by severity.
 5. `Compare-ReconRuns.ps1` diffs two run directories to surface configuration drift.
 

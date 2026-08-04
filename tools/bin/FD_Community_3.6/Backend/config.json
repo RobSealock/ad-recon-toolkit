@@ -1,0 +1,287 @@
+{
+  "TrinityStorage": "Database",
+  "ExportPath": "Reports",
+  "Zones": {
+    "T0": {
+      "Name": "Tier 0",
+      "Criticality": 1,
+      "Colour": "0,153,255",
+      "Initial": [
+        {
+          "Class": "DomainDNS"
+        },
+        {
+          "IDS": "AD",
+          "Class": "Container",
+          "DN": "^CN=AdminSDHolder,CN=System,"
+        },
+        {
+          "IDS": "AD",
+          "Class": "Container",
+          "DN": "^CN={(31B2F340-016D|6AC1786C-016F)-11D2-945F-00C04FB984F9},"
+        },
+        {
+          "IDS": "AD",
+          "Name": "^MSOL_",
+          "Class": "User"
+        },
+        {
+          "IDS": "AD",
+          "Name": "AZUREADSSOACC",
+          "Class": "Computer"
+        },
+        {
+          "IDS": "AD",
+          "Name": "^(DnsAdmins|Exchange (Admins|Domain Servers|Enterprise (Admins|Servers)|Trusted Subsystem|Organization Administrators|Servers|Windows Permissions)|Organization Management)$",
+          "Class": "Group"
+        },
+        {
+          "OID": "-(498|500|502|512|516|517|518|519|520|521|526|527|S-1-5-9|S-1-5-32-(544|548|549|550|551|555|557|559|562))$",
+          "IDS": "AD",
+          "Class": "^(?!SID$)"
+        },
+        {
+          "OID": "^00000003-0000-0000-c000-000000000000$",
+          "IDS": "EntraID"
+        },
+        {
+          "IDS": "EntraID",
+          "AppId": "^00000003-0000-0000-c000-000000000000$"
+        },
+        {
+          "IDS": "EntraID",
+          "RoleTemplateId": "^(9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3|cf1c38e5-3621-4004-a7cb-879624dced7c|c4e39bd9-1100-46d3-8c65-fb160da0071f|aaf43236-0c0d-4d5f-883a-6955382ac081|158c047a-c907-4556-b7ef-446551a6b5f7|7698a772-787b-4ac8-901f-60d6b08affd2|b1be1c3e-b65d-4f19-8427-f6fa0d97feb9|d29b2b05-8046-44ba-8758-1e26182fcf32|9360feb5-f418-4baa-8175-e2a00bac4301|62e90394-69f5-4237-9190-012177145e10|f2ef992c-3afb-46b9-b7cf-a126ee74c451|729827e3-9c14-49f7-bb1b-9608f156bbb8|8ac3fc64-6eca-42ea-9e69-59f4c7b60eb2|3a2c62db-5318-420d-8d74-23affee5d9d5|4ba39ca4-527c-499a-b93d-d9b492c50246|e00e864a-17c5-4a4b-9c06-f5b95a8d5bd8|966707d0-3269-4727-9be2-8c3a10f19b9d|7be44c8a-adaf-4e2a-84d6-ab2649e08a13|e8611ab8-c189-46e8-94e1-60213ab1f814|194ae4cb-b126-40b2-bd5b-6091b380977d|5f2222b1-57c3-48ba-8ad5-d4759f1fde6f|5d6b6bb7-de71-4623-b4af-96380a352509|fe930be7-5e62-47db-91af-98c3a49a38b1|25a516ed-2fa0-40ea-a2d0-12923a21473a)$"
+        }
+      ]
+    }
+  },
+  "Stores": {
+    "AD": {
+      "Rights": {
+        "AddAllowedToAct": {
+          "Cost": 4,
+          "Outgoing": false
+        },
+        "AddMember": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AddMemberToGmsaGroup": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AddSelf": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AllExtendedRights": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AllowedToAct": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AllowedToDelegateTo": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "Contains": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "DirSyncReadFilteredSet": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "ForceChangePassword": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "GenericAll": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "GenericWrite": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "GetChanges": {
+          "Cost": 3,
+          "Outgoing": false
+        },
+        "GetChangesAll": {
+          "Cost": 3,
+          "Outgoing": false
+        },
+        "GpLink": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "GplinkEdit": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "KeyCredentialLink": {
+          "Cost": 3,
+          "Outgoing": false
+        },
+        "Member": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "Owner": {
+          "Cost": 4,
+          "Outgoing": false
+        },
+        "PrimaryGroup": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "ReadGMSAPassword": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "ReadLAPSPassword": {
+          "Cost": 4,
+          "Outgoing": false
+        },
+        "SidHistory": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "WriteAccountRestrictions": {
+          "Cost": 4,
+          "Outgoing": false
+        },
+        "WriteAllProperties": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "WriteDacl": {
+          "Cost": 4,
+          "Outgoing": false
+        },
+        "WriteOwner": {
+          "Cost": 6,
+          "Outgoing": false
+        },
+        "WriteSPN": {
+          "Cost": 4,
+          "Outgoing": false
+        }
+      },
+      "Classes": {
+        "builtindomain": "Container",
+        "domaindns": "DomainDNS",
+        "computer": "Computer",
+        "container": "Container",
+        "foreignsecurityprincipal": "Principal",
+        "group": "Group",
+        "grouppolicycontainer": "Container",
+        "organizationalunit": "OU",
+        "rpccontainer": "Container",
+        "sid": "SID",
+        "user": "User",
+        "msds-groupmanagedserviceaccount": "Principal",
+        "msexchsystemobjectscontainer": "Container",
+        "msimaging-psps": "Container"
+      }
+    },
+    "EntraID": {
+      "Rights": {
+        "ActWithIdentity": {
+          "Cost": 1,
+          "Outgoing": false
+        },
+        "AdminTo": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "AdministrativeUnitReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "ApplicationReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "AppRoleAssignmentReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "AzureAddMember": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "AzureContains": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "AzureAddOwner": {
+          "Cost": 3,
+          "Outgoing": false
+        },
+        "AzureAddSecret": {
+          "Cost": 3,
+          "Outgoing": false
+        },
+        "AzureMember": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "DirectoryReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "GroupMemberReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "GroupReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "HasRole": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "HasOwner": {
+          "Cost": 2,
+          "Outgoing": false
+        },
+        "HasSession": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "OnPremisesSecurityIdentifier": {
+          "Cost": 5,
+          "Outgoing": false
+        },
+        "RoleManagementReadWriteDirectory": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "ServicePrincipalEndpointReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        },
+        "UserReadWriteAll": {
+          "Cost": 0,
+          "Outgoing": false
+        }
+      },
+      "Classes": {
+        "application": "Application",
+        "domaindns": "DomainDNS",
+        "directoryrole": "Role",
+        "serviceprincipal": "Service",
+        "sid": "SID",
+        "user": "User",
+        "group": "Group",
+        "administrativeunit": "OU",
+        "device": "Computer"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "BackendURL": "http://localhost:5000",
+  "UIWebServerPortOverride": null,
+  "DataOverloadThresholdForObjects": 2000,
+  "DataOverloadThresholdForRelationships": 5000,
+  "BlowoutIntersectionLimit": 250,
+  "DisableAutoUpdateZoneIsolationThresholdInSeconds": 5,
+  "DisableHardwareAcceleration": false,
+  "EntraIDAppRegistration": "fd24adb1-21ae-48cf-a37a-894cf18de9c3",
+  "EnableMSAuthModuleLogging": false,
+  "DevConsole": false
+}

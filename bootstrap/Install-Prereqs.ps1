@@ -377,6 +377,13 @@ if (Test-Path $pkRestoreScript) {
     Write-Warn 'Restore-PurpleKnight.ps1 not found — skipping PurpleKnight reassembly'
 }
 
+$fdRestoreScript = Join-Path $RepoRoot 'tools\bin\FD_Community_3.6\Restore-ForestDruid.ps1'
+if (Test-Path $fdRestoreScript) {
+    & $fdRestoreScript -Dir (Split-Path $fdRestoreScript)
+} else {
+    Write-Warn 'Restore-ForestDruid.ps1 not found — skipping Forest Druid reassembly'
+}
+
 # ── 4. Vendored binaries ──────────────────────────────────────────────────────
 Write-Step 'Checking vendored binaries...'
 $binDir = Join-Path $RepoRoot 'tools\bin'

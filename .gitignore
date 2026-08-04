@@ -22,11 +22,14 @@ tools/python/
 !tools/bin/PingCastleAutoUpdater.exe.zip
 !tools/bin/PK_Community_5.0/
 !tools/bin/PK_Community_5.0/**
+!tools/bin/FD_Community_3.6/
+!tools/bin/FD_Community_3.6/**
 # Re-exclude the oversized assembled executables (restored at runtime, not committed)
 tools/bin/PingCastle.exe
 tools/bin/PingCastleAutoUpdater.exe
 tools/bin/PingCastle.exe.zip
 tools/bin/PK_Community_5.0/PurpleKnight.exe
+tools/bin/FD_Community_3.6/ForestDruid.exe
 
 # Raw run artifacts (large zips / XML)
 output/runs/*/artifacts/
@@ -44,6 +47,10 @@ output/purpleknight/*.csv
 output/purpleknight/*.html
 output/purpleknight/*.xlsx
 !output/purpleknight/.gitkeep
+
+# Forest Druid exports — sensitive AD security data; store locally, do not commit
+output/forestdruid/*.csv
+!output/forestdruid/.gitkeep
 
 # OS / editor noise
 .DS_Store
