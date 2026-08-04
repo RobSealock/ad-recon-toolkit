@@ -65,20 +65,72 @@ if ($isServer) {
         }
     }
 } else {
+    # Bundled offline RSAT cabs (tools\rsat-offline\source) — extracted from the
+    # Windows 11 24H2/25H2 client FoD ISO. Used as a fallback -Source when the
+    # online Add-WindowsCapability call fails (no internet/WSUS), and directly
+    # when run with -OfflineOnly. See tools\rsat-offline\INSTALL.md.
+    $offlineSourcePath      = Join-Path $RepoRoot $manifest.RSATOfflineSource
+    $offlineSourceAvailable = Test-Path $offlineSourcePath
+    $offlineBuildWarned     = $false
+
+    function Install-RSATCapabilityOffline {
+        param([string]$Cap)
+        if (-not $offlineSourceAvailable) { return $false }
+
+        if (-not $script:offlineBuildWarned) {
+            $osBuild = [int](Get-CimInstance Win32_OperatingSystem).BuildNumber
+            if ($osBuild -notin 26100, 26200) {
+                Write-Warn "Bundled offline RSAT cabs were built for Windows 11 24H2/25H2 (build 26100/26200) -- this host is build $osBuild; attempting anyway, but the package set isn't guaranteed to match"
+            }
+            $script:offlineBuildWarned = $true
+        }
+
+        try {
+            # Rsat.ActiveDirectory.DS-LDS.Tools depends on Rsat.ServerManager.Tools.
+            # Windows Update resolves this automatically online; a local -Source
+            # does not, so install it explicitly first when needed.
+            if ($Cap -eq 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0') {
+                $dep = $manifest.RSATFeatures.ClientOfflineDependency
+                if ((Get-WindowsCapability -Online -Name $dep -ErrorAction SilentlyContinue).State -ne 'Installed') {
+                    Add-WindowsCapability -Online -Name $dep -Source $offlineSourcePath -LimitAccess -ErrorAction Stop | Out-Null
+                }
+            }
+            Add-WindowsCapability -Online -Name $Cap -Source $offlineSourcePath -LimitAccess -ErrorAction Stop | Out-Null
+            return $true
+        } catch {
+            Write-Warn "Offline install of ${Cap}: $_"
+            return $false
+        }
+    }
+
     foreach ($cap in $manifest.RSATFeatures.Client) {
         $state = (Get-WindowsCapability -Online -Name $cap -ErrorAction SilentlyContinue).State
         if ($state -eq 'Installed') {
             Write-OK "Capability installed: $cap"
-        } elseif (-not $OfflineOnly) {
-            Write-Step "Installing capability: $cap (first-time install can take 10-30+ min per capability -- known Windows DISM behavior on client OS, not a toolkit issue; set InstallRSATFeatures = `$false in settings.local.psd1 to skip)"
-            try {
-                Add-WindowsCapability -Online -Name $cap -ErrorAction Stop | Out-Null
-                Write-OK "Installed: $cap"
-            } catch {
-                Write-Warn "Could not install ${cap}: $_"
+            continue
+        }
+
+        if ($OfflineOnly) {
+            Write-Step "Installing capability from bundled offline source: $cap"
+            if (Install-RSATCapabilityOffline -Cap $cap) {
+                Write-OK "Installed (offline source): $cap"
+            } else {
+                Write-Warn "Not installed (offline mode, no usable source): $cap"
             }
-        } else {
-            Write-Warn "Not installed (offline mode): $cap"
+            continue
+        }
+
+        Write-Step "Installing capability: $cap (first-time install can take 10-30+ min per capability -- known Windows DISM behavior on client OS, not a toolkit issue; set InstallRSATFeatures = `$false in settings.local.psd1 to skip)"
+        try {
+            Add-WindowsCapability -Online -Name $cap -ErrorAction Stop | Out-Null
+            Write-OK "Installed: $cap"
+        } catch {
+            Write-Warn "Online install failed for ${cap}: $_ -- trying bundled offline source"
+            if (Install-RSATCapabilityOffline -Cap $cap) {
+                Write-OK "Installed (offline fallback): $cap"
+            } else {
+                Write-Warn "Could not install $cap (online failed, no offline source available)"
+            }
         }
     }
 }

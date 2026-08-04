@@ -315,7 +315,20 @@
             'Rsat.DHCP.Tools~~~~0.0.1.0'
             'Rsat.GroupPolicy.Management.Tools~~~~0.0.1.0'
         )
+
+        # Dependency required for Rsat.ActiveDirectory.DS-LDS.Tools when installing
+        # from a local offline -Source; Windows Update auto-resolves this when
+        # installing online, so it's not needed in the Client list above.
+        ClientOfflineDependency = 'Rsat.ServerManager.Tools~~~~0.0.1.0'
     }
+
+    # Bundled offline install source for the RSAT client capabilities above —
+    # cabs extracted from the Windows 11 24H2/25H2 client FoD ISO
+    # (CLIENT_FOD_LP_X64FRE_MULTI_DV9). Used by Install-Prereqs.ps1 as a
+    # fallback -Source when the online Add-WindowsCapability call fails (no
+    # internet/WSUS), and directly when run with -OfflineOnly.
+    # See tools\rsat-offline\INSTALL.md for manual use and build-scope notes.
+    RSATOfflineSource = 'tools\rsat-offline\source'
 
     # =========================================================================
     # PORTABLE PYTHON  —  fallback runtime for pip packages (e.g. Certipy) when

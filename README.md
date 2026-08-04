@@ -98,6 +98,8 @@ All switches live in `config\settings.psd1`. Local overrides (API tokens, creden
 
 On a Windows **client** OS (not Server), installing RSAT via `Add-WindowsCapability` can take 10–30+ minutes *per capability* the first time it runs on a given machine — a known Windows DISM behavior (it walks every locale variant in the component catalog regardless of which languages you have installed), not something specific to this toolkit. It's a one-time cost per machine: once installed, every later run just confirms it's present and moves on in a second or two. None of the collectors require it — DNS/DHCP/GPO-Settings soft-fail their RSAT-specific checks and still run everything else. If you'd rather not wait on a fresh machine, set `InstallRSATFeatures = $false` in `settings.local.psd1`.
 
+**Offline RSAT install.** `tools\rsat-offline\` bundles the RSAT/GPO/DNS/DHCP client capability cabs (extracted from the Windows 11 24H2/25H2 client FoD ISO), for hosts with no internet or WSUS reachability. `Install-Prereqs.ps1` uses this bundle automatically — as a fallback when the online `Add-WindowsCapability` call fails, or directly when run with `-OfflineOnly`. On a build other than 24H2/25H2 it warns rather than blocking (the package set isn't guaranteed to match). See `tools\rsat-offline\INSTALL.md` for manual use.
+
 To scan hosts beyond the auto-discovered DCs/AD-role servers, set `TargetsFile = 'config\targets.psd1'` in `settings.psd1`/`settings.local.psd1`. Like `settings.local.psd1`, `config\targets.psd1` does not ship with the repo and is git-ignored — copy the template at `config\targets.sample.psd1` to `config\targets.psd1` and populate it.
 
 ---
