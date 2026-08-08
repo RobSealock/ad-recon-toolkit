@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="tools/bin/adrecon.png" alt="ADRECON logo" width="260">
+</p>
+
 # ad-recon-toolkit
 
 Blue-team documentation and assessment toolkit for on-premises Active Directory and Server OS.
